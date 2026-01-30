@@ -84,6 +84,14 @@ Materials can also extend a preset. For example, you can set preset=asphalt and 
 
 If you want walls made of a specific material to behave as soft or hard collisions, set collision or collision_material in the [material] section. Valid values are hard, soft, rubber, metal, concrete, wood, dirt, grass, or sand. Walls then use the collision behavior of their material automatically.
 
+## Rooms (acoustic profiles)
+
+Rooms describe how a space sounds beyond surface materials. A room profile controls reverb time, wetness, diffusion, air absorption, and other acoustic scaling. Areas can reference a room with room=id and can override any room values directly on the area. If an area has no ceiling, you can still use a room profile, but most tracks will choose an outdoor preset for open areas.
+
+Room presets include outdoor_open, outdoor_urban, outdoor_forest, tunnel_short, tunnel_long, garage_small, garage_large, underpass, canyon, stadium_open, hall_medium, hall_large, room_small, room_medium, and room_large. You can create your own room section and optionally start from a preset, then override just the values you want to change.
+
+Room keys are reverb_time, reverb_gain, hf_decay_ratio, early_reflections_gain, late_reverb_gain, diffusion, air_absorption, occlusion_scale, and transmission_scale. All values are 0 to 1 except reverb_time, which is seconds.
+
 ## Walls
 
 Walls prevent movement into empty space. They are separate from areas. A wall has a shape and a width, and it blocks movement when the player reaches it. Auto-walls can be generated per area using metadata. They place a wall along specific edges and only where the edge borders empty space, so connections between areas stay open.

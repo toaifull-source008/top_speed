@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using TopSpeed.Data;
+using TopSpeed.Tracks.Rooms;
 
 namespace TopSpeed.Tracks.Areas
 {
@@ -16,6 +17,8 @@ namespace TopSpeed.Tracks.Areas
             float elevationMeters,
             float heightMeters,
             float? ceilingHeightMeters,
+            string? roomId,
+            TrackRoomOverrides? roomOverrides,
             string? name = null,
             string? materialId = null,
             TrackNoise? noise = null,
@@ -38,6 +41,9 @@ namespace TopSpeed.Tracks.Areas
             ElevationMeters = elevationMeters;
             HeightMeters = heightMeters;
             CeilingHeightMeters = ceilingHeightMeters;
+            var trimmedRoom = roomId?.Trim();
+            RoomId = string.IsNullOrWhiteSpace(trimmedRoom) ? null : trimmedRoom;
+            RoomOverrides = roomOverrides;
             var trimmedName = name?.Trim();
             Name = string.IsNullOrWhiteSpace(trimmedName) ? null : trimmedName;
             var trimmedMaterial = materialId?.Trim();
@@ -54,6 +60,8 @@ namespace TopSpeed.Tracks.Areas
         public float ElevationMeters { get; }
         public float HeightMeters { get; }
         public float? CeilingHeightMeters { get; }
+        public string? RoomId { get; }
+        public TrackRoomOverrides? RoomOverrides { get; }
         public string? Name { get; }
         public string? MaterialId { get; }
         public TrackNoise? Noise { get; }

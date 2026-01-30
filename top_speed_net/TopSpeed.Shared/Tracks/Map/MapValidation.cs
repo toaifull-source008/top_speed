@@ -6,6 +6,7 @@ using System.Linq;
 using System.Numerics;
 using TopSpeed.Data;
 using TopSpeed.Tracks.Materials;
+using TopSpeed.Tracks.Rooms;
 using TopSpeed.Tracks.Areas;
 using TopSpeed.Tracks.Beacons;
 using TopSpeed.Tracks.Guidance;
@@ -117,6 +118,7 @@ namespace TopSpeed.Tracks.Map
             Branches = Array.Empty<TrackBranchDefinition>();
             Walls = Array.Empty<TrackWallDefinition>();
             Materials = Array.Empty<TrackMaterialDefinition>();
+            Rooms = Array.Empty<TrackRoomDefinition>();
         }
 
         public TrackMapDefinition(
@@ -131,7 +133,8 @@ namespace TopSpeed.Tracks.Map
             List<TrackApproachDefinition> approaches,
             List<TrackBranchDefinition> branches,
             List<TrackWallDefinition> walls,
-            List<TrackMaterialDefinition> materials)
+            List<TrackMaterialDefinition> materials,
+            List<TrackRoomDefinition> rooms)
         {
             Metadata = metadata;
             Sectors = sectors ?? new List<TrackSectorDefinition>();
@@ -145,6 +148,7 @@ namespace TopSpeed.Tracks.Map
             Branches = branches ?? new List<TrackBranchDefinition>();
             Walls = walls ?? new List<TrackWallDefinition>();
             Materials = materials ?? new List<TrackMaterialDefinition>();
+            Rooms = rooms ?? new List<TrackRoomDefinition>();
         }
 
         public TrackMapMetadata Metadata { get; }
@@ -159,6 +163,7 @@ namespace TopSpeed.Tracks.Map
         public IReadOnlyList<TrackBranchDefinition> Branches { get; }
         public IReadOnlyList<TrackWallDefinition> Walls { get; }
         public IReadOnlyList<TrackMaterialDefinition> Materials { get; }
+        public IReadOnlyList<TrackRoomDefinition> Rooms { get; }
     }
 
     public static class TrackMapFormat
@@ -192,6 +197,16 @@ namespace TopSpeed.Tracks.Map
             "height",
             "ceiling",
             "ceiling_height",
+            "room",
+            "reverb_time",
+            "reverb_gain",
+            "hf_decay_ratio",
+            "early_reflections_gain",
+            "late_reverb_gain",
+            "diffusion",
+            "air_absorption",
+            "occlusion_scale",
+            "transmission_scale",
             "flags",
             "flag",
             "caps",
@@ -290,6 +305,21 @@ namespace TopSpeed.Tracks.Map
             "collision",
             "collision_material"
         };
+        private static readonly HashSet<string> RoomKnownKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "id",
+            "name",
+            "preset",
+            "reverb_time",
+            "reverb_gain",
+            "hf_decay_ratio",
+            "early_reflections_gain",
+            "late_reverb_gain",
+            "diffusion",
+            "air_absorption",
+            "occlusion_scale",
+            "transmission_scale"
+        };
 
         public static bool TryResolvePath(string nameOrPath, out string path)
         {
@@ -336,6 +366,7 @@ namespace TopSpeed.Tracks.Map
             var walls = new List<TrackWallDefinition>();
             var branches = new List<TrackBranchDefinition>();
             var materials = new List<TrackMaterialDefinition>();
+            var rooms = new List<TrackRoomDefinition>();
             var guideBlocks = new List<SectionBlock>();
             var branchBlocks = new List<SectionBlock>();
 
@@ -401,6 +432,9 @@ namespace TopSpeed.Tracks.Map
                     case "acoustic_material":
                         issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, "acoustic_material sections are not supported. Use [material] instead.", block.StartLine));
                         break;
+                    case "room":
+                        ApplyRoom(rooms, block, issues);
+                        break;
                     case "turn":
                         ApplyTurn(metadata, sectors, areas, shapes, portals, approaches, block, issues);
                         break;
@@ -415,7 +449,7 @@ namespace TopSpeed.Tracks.Map
             if (branchBlocks.Count > 0)
                 ApplyBranches(branchBlocks, sectors, areas, portals, branches, issues);
 
-            map = new TrackMapDefinition(metadata, sectors, areas, shapes, portals, links, beacons, markers, approaches, branches, walls, materials);
+            map = new TrackMapDefinition(metadata, sectors, areas, shapes, portals, links, beacons, markers, approaches, branches, walls, materials, rooms);
             return issues.All(issue => issue.Severity != TrackMapIssueSeverity.Error);
         }
 
@@ -903,6 +937,10 @@ namespace TopSpeed.Tracks.Map
             }
 
             var name = TryGetValue(block, "name", out var nameValue) ? nameValue : null;
+            var roomId = TryGetValue(block, "room", out var roomValue) ? roomValue?.Trim() : null;
+            if (string.IsNullOrWhiteSpace(roomId))
+                roomId = null;
+            var roomOverrides = ReadRoomOverrides(block, out var hasRoomOverrides);
             var materialId = TryMaterialId(block, "material", out var materialValue) ? materialValue : null;
             if (string.IsNullOrWhiteSpace(materialId))
             {
@@ -949,6 +987,12 @@ namespace TopSpeed.Tracks.Map
                 return;
             }
 
+            if (hasRoomOverrides && string.IsNullOrWhiteSpace(roomId))
+            {
+                issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Area '{id}' has room overrides but no room id.", block.StartLine));
+                return;
+            }
+
             if (ceilingMeters.HasValue &&
                 TryFloatAny(block, out var wallHeightValue, "wall_height", "wall_height_m"))
             {
@@ -968,7 +1012,7 @@ namespace TopSpeed.Tracks.Map
             if (HasBranchKeys(block))
                 issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Area '{id}' contains branch keys. Use a [branch] section instead.", block.StartLine));
 
-            areas.Add(new TrackAreaDefinition(id, areaType, shapeId, elevationMeters, heightMeters, ceilingMeters, name, materialId, noise, width, flags, areaMetadata));
+            areas.Add(new TrackAreaDefinition(id, areaType, shapeId, elevationMeters, heightMeters, ceilingMeters, roomId, roomOverrides, name, materialId, noise, width, flags, areaMetadata));
         }
 
         private static bool HasGuideKeys(SectionBlock block)
@@ -1931,6 +1975,10 @@ namespace TopSpeed.Tracks.Map
             var hasTurnElevation = TryFloatAny(block, out var turnElevationValue, "elevation");
             var hasTurnHeight = TryFloatAny(block, out var turnHeightValue, "height");
             var hasTurnCeiling = TryFloatAny(block, out var turnCeilingValue, "ceiling_height", "ceiling");
+            var turnRoomId = TryGetValue(block, "room", out var roomValue) ? roomValue?.Trim() : null;
+            if (string.IsNullOrWhiteSpace(turnRoomId))
+                turnRoomId = null;
+            var turnRoomOverrides = ReadRoomOverrides(block, out var hasTurnRoomOverrides);
 
             if (!TryReadHeading(block, "from", out var fromHeading) &&
                 !TryReadHeading(block, "entry", out fromHeading) &&
@@ -2078,6 +2126,11 @@ namespace TopSpeed.Tracks.Map
                     return;
                 }
             }
+            if (hasTurnRoomOverrides && string.IsNullOrWhiteSpace(turnRoomId))
+            {
+                issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, "Turn has room overrides but no room id.", block.StartLine));
+                return;
+            }
 
             areas.Add(new TrackAreaDefinition(
                 areaId,
@@ -2086,6 +2139,8 @@ namespace TopSpeed.Tracks.Map
                 turnElevation,
                 turnHeight,
                 turnCeiling,
+                turnRoomId,
+                turnRoomOverrides,
                 name,
                 string.IsNullOrWhiteSpace(turnMaterialId) ? metadata.DefaultMaterialId : turnMaterialId,
                 turnNoise,
@@ -2350,6 +2405,86 @@ namespace TopSpeed.Tracks.Map
                 collisionMaterial));
         }
 
+        private static void ApplyRoom(
+            List<TrackRoomDefinition> rooms,
+            SectionBlock block,
+            List<TrackMapIssue> issues)
+        {
+            if (!TryReadId(block, out var id))
+            {
+                issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, "Room requires an id.", block.StartLine));
+                return;
+            }
+
+            if (rooms.Any(r => string.Equals(r.Id, id, StringComparison.OrdinalIgnoreCase)))
+            {
+                issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Duplicate room id '{id}'.", block.StartLine));
+                return;
+            }
+
+            var name = TryGetValue(block, "name", out var nameValue) ? nameValue : null;
+            TrackRoomDefinition? preset = null;
+            if (TryGetValue(block, "preset", out var presetValue) && !string.IsNullOrWhiteSpace(presetValue))
+            {
+                if (!TrackRoomLibrary.TryGetPreset(presetValue.Trim(), out preset))
+                {
+                    issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Room '{id}' has unknown preset '{presetValue}'.", block.StartLine));
+                    return;
+                }
+            }
+
+            var hasReverbTime = TryFloat(block, "reverb_time", out var reverbTime);
+            var hasReverbGain = TryFloat(block, "reverb_gain", out var reverbGain);
+            var hasHfDecay = TryFloat(block, "hf_decay_ratio", out var hfDecayRatio);
+            var hasEarlyGain = TryFloat(block, "early_reflections_gain", out var earlyGain);
+            var hasLateGain = TryFloat(block, "late_reverb_gain", out var lateGain);
+            var hasDiffusion = TryFloat(block, "diffusion", out var diffusion);
+            var hasAirAbsorption = TryFloat(block, "air_absorption", out var airAbsorption);
+            var hasOcclusion = TryFloat(block, "occlusion_scale", out var occlusionScale);
+            var hasTransmission = TryFloat(block, "transmission_scale", out var transmissionScale);
+
+            var hasAny = preset != null || hasReverbTime || hasReverbGain || hasHfDecay ||
+                         hasEarlyGain || hasLateGain || hasDiffusion || hasAirAbsorption ||
+                         hasOcclusion || hasTransmission;
+
+            if (!hasAny)
+            {
+                issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Room '{id}' requires preset or room values.", block.StartLine));
+                return;
+            }
+
+            if (preset == null &&
+                (!hasReverbTime || !hasReverbGain || !hasHfDecay || !hasEarlyGain || !hasLateGain ||
+                 !hasDiffusion || !hasAirAbsorption || !hasOcclusion || !hasTransmission))
+            {
+                issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Room '{id}' requires all room values when no preset is provided.", block.StartLine));
+                return;
+            }
+
+            var resolvedReverbTime = hasReverbTime ? Math.Max(0f, reverbTime) : preset!.ReverbTimeSeconds;
+            var resolvedReverbGain = hasReverbGain ? Clamp01(reverbGain) : preset!.ReverbGain;
+            var resolvedHfDecay = hasHfDecay ? Clamp01(hfDecayRatio) : preset!.HfDecayRatio;
+            var resolvedEarlyGain = hasEarlyGain ? Clamp01(earlyGain) : preset!.EarlyReflectionsGain;
+            var resolvedLateGain = hasLateGain ? Clamp01(lateGain) : preset!.LateReverbGain;
+            var resolvedDiffusion = hasDiffusion ? Clamp01(diffusion) : preset!.Diffusion;
+            var resolvedAirAbsorption = hasAirAbsorption ? Clamp01(airAbsorption) : preset!.AirAbsorption;
+            var resolvedOcclusion = hasOcclusion ? Clamp01(occlusionScale) : preset!.OcclusionScale;
+            var resolvedTransmission = hasTransmission ? Clamp01(transmissionScale) : preset!.TransmissionScale;
+
+            rooms.Add(new TrackRoomDefinition(
+                id,
+                name,
+                resolvedReverbTime,
+                resolvedReverbGain,
+                resolvedHfDecay,
+                resolvedEarlyGain,
+                resolvedLateGain,
+                resolvedDiffusion,
+                resolvedAirAbsorption,
+                resolvedOcclusion,
+                resolvedTransmission));
+        }
+
         private static void ApplyApproach(
             List<TrackApproachDefinition> approaches,
             SectionBlock block,
@@ -2586,6 +2721,32 @@ namespace TopSpeed.Tracks.Map
             if (!TryGetValue(block, key, out var raw))
                 return false;
             return TryBool(raw, out value);
+        }
+
+        private static TrackRoomOverrides? ReadRoomOverrides(SectionBlock block, out bool hasAny)
+        {
+            var overrides = new TrackRoomOverrides();
+            if (TryFloat(block, "reverb_time", out var reverbTime))
+                overrides.ReverbTimeSeconds = Math.Max(0f, reverbTime);
+            if (TryFloat(block, "reverb_gain", out var reverbGain))
+                overrides.ReverbGain = Clamp01(reverbGain);
+            if (TryFloat(block, "hf_decay_ratio", out var hfDecayRatio))
+                overrides.HfDecayRatio = Clamp01(hfDecayRatio);
+            if (TryFloat(block, "early_reflections_gain", out var earlyGain))
+                overrides.EarlyReflectionsGain = Clamp01(earlyGain);
+            if (TryFloat(block, "late_reverb_gain", out var lateGain))
+                overrides.LateReverbGain = Clamp01(lateGain);
+            if (TryFloat(block, "diffusion", out var diffusion))
+                overrides.Diffusion = Clamp01(diffusion);
+            if (TryFloat(block, "air_absorption", out var airAbsorption))
+                overrides.AirAbsorption = Clamp01(airAbsorption);
+            if (TryFloat(block, "occlusion_scale", out var occlusionScale))
+                overrides.OcclusionScale = Clamp01(occlusionScale);
+            if (TryFloat(block, "transmission_scale", out var transmissionScale))
+                overrides.TransmissionScale = Clamp01(transmissionScale);
+
+            hasAny = overrides.HasAny;
+            return hasAny ? overrides : null;
         }
 
         private static bool TryMaterialId(SectionBlock block, string key, out string materialId)
@@ -3498,6 +3659,7 @@ namespace TopSpeed.Tracks.Map
             var shapeIds = new HashSet<string>(map.Shapes.Select(s => s.Id), StringComparer.OrdinalIgnoreCase);
             var portalIds = new HashSet<string>(map.Portals.Select(p => p.Id), StringComparer.OrdinalIgnoreCase);
             var materialIds = new HashSet<string>(map.Materials.Select(m => m.Id), StringComparer.OrdinalIgnoreCase);
+            var roomIds = new HashSet<string>(map.Rooms.Select(r => r.Id), StringComparer.OrdinalIgnoreCase);
 
             if (map.Materials.Count > 0)
             {
@@ -3508,6 +3670,18 @@ namespace TopSpeed.Tracks.Map
                         continue;
                     if (!seen.Add(material.Id))
                         issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Duplicate material id '{material.Id}'."));
+                }
+            }
+
+            if (map.Rooms.Count > 0)
+            {
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var room in map.Rooms)
+                {
+                    if (room == null)
+                        continue;
+                    if (!seen.Add(room.Id))
+                        issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Duplicate room id '{room.Id}'."));
                 }
             }
 
@@ -3522,6 +3696,12 @@ namespace TopSpeed.Tracks.Map
                     var materialId = area.MaterialId!;
                     if (!materialIds.Contains(materialId) && !TrackMaterialLibrary.IsPreset(materialId))
                         issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Area '{area.Id}' references missing material '{materialId}'."));
+                }
+                if (!string.IsNullOrWhiteSpace(area.RoomId))
+                {
+                    var roomId = area.RoomId!;
+                    if (!roomIds.Contains(roomId) && !TrackRoomLibrary.IsPreset(roomId))
+                        issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Area '{area.Id}' references missing room '{roomId}'."));
                 }
             }
 

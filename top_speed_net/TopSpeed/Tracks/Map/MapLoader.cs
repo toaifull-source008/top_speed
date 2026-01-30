@@ -5,6 +5,7 @@ using System.Numerics;
 using TopSpeed.Core;
 using TopSpeed.Data;
 using TopSpeed.Tracks.Materials;
+using TopSpeed.Tracks.Rooms;
 using TopSpeed.Tracks.Areas;
 using TopSpeed.Tracks.Topology;
 using TopSpeed.Tracks.Walls;
@@ -90,12 +91,15 @@ namespace TopSpeed.Tracks.Map
                 map.AddBranch(branch);
             foreach (var material in definition.Materials)
                 map.AddMaterial(material);
+            foreach (var room in definition.Rooms)
+                map.AddRoom(room);
 
             AddSafeZoneRing(map, definition.Metadata);
             AddOuterRing(map, definition.Metadata);
             AddExplicitWalls(map, definition);
             AddAutoWalls(map, definition);
             AddPresetMaterials(map, definition);
+            AddPresetRooms(map, definition);
             ApplyStartFromAreas(map, definition);
             ApplyFinishFromAreas(map, definition);
 
@@ -311,6 +315,34 @@ namespace TopSpeed.Tracks.Map
                 if (TrackMaterialLibrary.TryGetPreset(id, out var preset))
                 {
                     map.AddMaterial(preset);
+                    existing.Add(id);
+                }
+            }
+        }
+
+        private static void AddPresetRooms(TrackMap map, TrackMapDefinition definition)
+        {
+            if (map == null || definition == null)
+                return;
+
+            var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var room in map.Rooms)
+            {
+                if (room == null)
+                    continue;
+                existing.Add(room.Id);
+            }
+
+            foreach (var area in map.Areas)
+            {
+                if (area == null || string.IsNullOrWhiteSpace(area.RoomId))
+                    continue;
+                var id = area.RoomId!.Trim();
+                if (existing.Contains(id))
+                    continue;
+                if (TrackRoomLibrary.TryGetPreset(id, out var preset))
+                {
+                    map.AddRoom(preset);
                     existing.Add(id);
                 }
             }
@@ -699,7 +731,7 @@ namespace TopSpeed.Tracks.Map
             var shapeId = idPrefix + "_shape";
             var areaId = idPrefix + "_area";
             map.AddShape(new ShapeDefinition(shapeId, ShapeType.Ring, innerMinX, innerMinZ, innerWidth, innerHeight, ringWidth: ringWidth));
-            map.AddArea(new TrackAreaDefinition(areaId, areaType, shapeId, elevationMeters, heightMeters, ceilingHeightMeters, name, materialId, noise, null, flags));
+            map.AddArea(new TrackAreaDefinition(areaId, areaType, shapeId, elevationMeters, heightMeters, ceilingHeightMeters, null, null, name, materialId, noise, null, flags));
         }
 
         private static void ApplyStartFromAreas(TrackMap map, TrackMapDefinition definition)

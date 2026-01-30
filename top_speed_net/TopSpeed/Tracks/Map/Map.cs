@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using TopSpeed.Data;
 using TopSpeed.Tracks.Materials;
+using TopSpeed.Tracks.Rooms;
 using TopSpeed.Tracks.Areas;
 using TopSpeed.Tracks.Beacons;
 using TopSpeed.Tracks.Guidance;
@@ -26,6 +27,7 @@ namespace TopSpeed.Tracks.Map
         private readonly List<TrackBranchDefinition> _branches;
         private readonly List<TrackWallDefinition> _walls;
         private readonly List<TrackMaterialDefinition> _materials;
+        private readonly List<TrackRoomDefinition> _rooms;
 
         public TrackMap(string name, float cellSizeMeters)
         {
@@ -42,6 +44,7 @@ namespace TopSpeed.Tracks.Map
             _branches = new List<TrackBranchDefinition>();
             _walls = new List<TopSpeed.Tracks.Walls.TrackWallDefinition>();
             _materials = new List<TrackMaterialDefinition>();
+            _rooms = new List<TrackRoomDefinition>();
         }
 
         public string Name { get; }
@@ -57,6 +60,7 @@ namespace TopSpeed.Tracks.Map
         public IReadOnlyList<TrackBranchDefinition> Branches => _branches;
         public IReadOnlyList<TrackWallDefinition> Walls => _walls;
         public IReadOnlyList<TrackMaterialDefinition> Materials => _materials;
+        public IReadOnlyList<TrackRoomDefinition> Rooms => _rooms;
         public TrackWeather Weather { get; set; } = TrackWeather.Sunny;
         public TrackAmbience Ambience { get; set; } = TrackAmbience.NoAmbience;
         public string DefaultMaterialId { get; set; } = "asphalt";
@@ -128,6 +132,13 @@ namespace TopSpeed.Tracks.Map
             if (wall == null)
                 throw new ArgumentNullException(nameof(wall));
             _walls.Add(wall);
+        }
+
+        public void AddRoom(TrackRoomDefinition room)
+        {
+            if (room == null)
+                throw new ArgumentNullException(nameof(room));
+            _rooms.Add(room);
         }
 
         public void AddMaterial(TrackMaterialDefinition material)
