@@ -433,6 +433,9 @@ namespace TS.Audio
             var roomEqHigh = Clamp01(Volatile.Read(ref spatial.RoomEarlyReflectionsGain));
             var roomEqLow = Clamp01(Volatile.Read(ref spatial.RoomLateReverbGain));
             var roomEqMid = Clamp01((roomEqLow + roomEqHigh) * 0.5f);
+            var diffusion = Clamp01(Volatile.Read(ref spatial.RoomDiffusion));
+            roomEqLow = Lerp(roomEqLow, roomEqMid, diffusion);
+            roomEqHigh = Lerp(roomEqHigh, roomEqMid, diffusion);
             var roomDelay = 0;
             handle.ApplyReflectionSimulation(roomTimeLow, roomTimeMid, roomTimeHigh, roomEqLow, roomEqMid, roomEqHigh, roomDelay);
         }

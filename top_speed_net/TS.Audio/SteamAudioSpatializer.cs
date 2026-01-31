@@ -224,6 +224,11 @@ namespace TS.Audio
                 {
                     ApplyReflections(frames, spatial);
                     float wetScale = Volatile.Read(ref spatial.ReflectionWet);
+                    var roomFlags = Volatile.Read(ref spatial.RoomFlags);
+                    if ((roomFlags & AudioSourceSpatialParams.RoomHasProfile) != 0)
+                    {
+                        wetScale *= Clamp01(Volatile.Read(ref spatial.RoomReverbGain));
+                    }
                     for (int i = 0; i < frames; i++)
                     {
                         int idx = i * (int)channels;
@@ -361,6 +366,11 @@ namespace TS.Audio
                 {
                     ApplyReflections(frames, spatial);
                     float wetScale = Volatile.Read(ref spatial.ReflectionWet);
+                    var roomFlags = Volatile.Read(ref spatial.RoomFlags);
+                    if ((roomFlags & AudioSourceSpatialParams.RoomHasProfile) != 0)
+                    {
+                        wetScale *= Clamp01(Volatile.Read(ref spatial.RoomReverbGain));
+                    }
                     for (int i = 0; i < frames; i++)
                     {
                         int idx = i * (int)channels;
@@ -518,6 +528,11 @@ namespace TS.Audio
             if (value < min) return min;
             if (value > max) return max;
             return value;
+        }
+
+        private static float Clamp01(float value)
+        {
+            return Clamp(value, 0f, 1f);
         }
 
         private float DownmixSample(NativeArray<float> framesIn, int offset, int channels)

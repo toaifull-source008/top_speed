@@ -92,6 +92,7 @@ Room presets include outdoor_open, outdoor_urban, outdoor_forest, tunnel_short, 
 
 Room keys are reverb_time, reverb_gain, reflection_wet, hf_decay_ratio, early_reflections_gain, late_reverb_gain, diffusion, air_absorption, occlusion_scale, and transmission_scale. All values are 0 to 1 except reverb_time, which is seconds.
 Optional override keys replace simulation instead of scaling it: occlusion_override, transmission_override (or transmission_override_low/_mid/_high), and air_absorption_override (or air_absorption_override_low/_mid/_high). If an override key is present, its value wins for that band; otherwise the *_scale values are applied to the simulated result.
+Reflection wetness is multiplied by reverb_gain when a room profile is active, so both keys contribute to the final reverb loudness.
 
 ## Walls
 

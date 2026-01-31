@@ -110,8 +110,14 @@ height=30
 
 # Rooms
 [room: demo_room]
-preset=tunnel_long
-reflection_wet=0.1
+preset=hall_large
+reflection_wet=1.0
+reverb_gain=1.0
+reverb_time=5.0
+hf_decay_ratio=0.95
+early_reflections_gain=1.0
+late_reverb_gain=1.0
+diffusion=1.0
 
 # Areas
 [area: loop_area]
