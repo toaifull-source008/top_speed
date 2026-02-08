@@ -357,6 +357,13 @@ namespace TopSpeed.Tracks.Map
                 return false;
             }
 
+            if (TryGetMeshCollision(previousPosition, nextPosition, out _))
+            {
+                boundaryHit = true;
+                road = RoadAt(state);
+                return false;
+            }
+
             if (!IsWithinTrack(nextPosition))
             {
                 boundaryHit = true;

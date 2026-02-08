@@ -1862,6 +1862,7 @@ namespace TopSpeed.Tracks.Map
                 issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, "Area requires a geometry id.", block.StartLine));
                 return;
             }
+            geometryId = geometryId!.Trim();
 
             var volumeId = TryGetValue(block, "volume", out var volumeValue) ? volumeValue :
                 (TryGetValue(block, "volume_id", out volumeValue) ? volumeValue : null);
@@ -2135,12 +2136,16 @@ namespace TopSpeed.Tracks.Map
             var sectorsByArea = new Dictionary<string, List<TrackSectorDefinition>>(StringComparer.OrdinalIgnoreCase);
             foreach (var sector in sectors)
             {
-                if (sector == null || string.IsNullOrWhiteSpace(sector.AreaId))
+                if (sector == null)
                     continue;
-                if (!sectorsByArea.TryGetValue(sector.AreaId!, out var list))
+                var sectorAreaId = sector.AreaId;
+                if (string.IsNullOrWhiteSpace(sectorAreaId))
+                    continue;
+                sectorAreaId = sectorAreaId!.Trim();
+                if (!sectorsByArea.TryGetValue(sectorAreaId, out var list))
                 {
                     list = new List<TrackSectorDefinition>();
-                    sectorsByArea[sector.AreaId!] = list;
+                    sectorsByArea[sectorAreaId] = list;
                 }
                 list.Add(sector);
             }
@@ -2581,14 +2586,14 @@ namespace TopSpeed.Tracks.Map
             List<TrackSectorDefinition> targets,
             Dictionary<string, TrackAreaDefinition> areasById)
         {
-            if (!string.IsNullOrWhiteSpace(areaId) && areasById.TryGetValue(areaId.Trim(), out var area))
+            if (!string.IsNullOrWhiteSpace(areaId) && areasById.TryGetValue(areaId!.Trim(), out var area))
                 return area.GeometryId;
 
             if (targets != null && targets.Count == 1)
             {
                 var sectorAreaId = targets[0].AreaId;
                 if (!string.IsNullOrWhiteSpace(sectorAreaId) &&
-                    areasById.TryGetValue(sectorAreaId.Trim(), out var sectorArea))
+                    areasById.TryGetValue(sectorAreaId!.Trim(), out var sectorArea))
                 {
                     return sectorArea.GeometryId;
                 }

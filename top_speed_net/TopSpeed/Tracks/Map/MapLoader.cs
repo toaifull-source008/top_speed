@@ -110,6 +110,7 @@ namespace TopSpeed.Tracks.Map
                 map.AddSurface(surface);
 
             AddExplicitWalls(map, definition);
+            AddAutoWalls(map, definition);
             AddPresetMaterials(map, definition);
             AddPresetRooms(map, definition);
             ApplyStartFromAreas(map, definition);
@@ -225,6 +226,402 @@ namespace TopSpeed.Tracks.Map
                     resolvedMaterialId);
                 map.AddWall(resolvedWall);
             }
+        }
+
+        private static void AddAutoWalls(TrackMap map, TrackMapDefinition definition)
+        {
+            if (map == null || definition == null)
+                return;
+
+            var areaManager = new TrackAreaManager(map.Geometries, map.Areas, map.Volumes);
+            var geometryIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var wallIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var geometry in map.Geometries)
+            {
+                if (geometry != null && !string.IsNullOrWhiteSpace(geometry.Id))
+                    geometryIds.Add(geometry.Id);
+            }
+            foreach (var wall in map.Walls)
+            {
+                if (wall != null && !string.IsNullOrWhiteSpace(wall.Id))
+                    wallIds.Add(wall.Id);
+            }
+
+            foreach (var area in map.Areas)
+            {
+                if (area == null || area.Metadata == null || area.Metadata.Count == 0)
+                    continue;
+
+                if (!TryGetBool(area.Metadata, out var autoWallsEnabled, "auto_walls", "auto_wall", "walls_auto", "auto_wall_enabled") ||
+                    !autoWallsEnabled)
+                    continue;
+
+                if (!areaManager.TryGetGeometry(area.GeometryId, out var geometry))
+                    continue;
+
+                if (geometry.Type != GeometryType.Polygon)
+                    continue;
+
+                var edges = ParseWallEdges(area.Metadata);
+                if (edges.Count == 0)
+                    continue;
+
+                var width = TryGetFloat(area.Metadata, out var widthValue, "wall_width", "wall_thickness", "wall_size")
+                    ? Math.Max(0f, widthValue)
+                    : 1f;
+
+                var wallHeight = ResolveWallHeight(area);
+                if (TryGetFloat(area.Metadata, out var wallHeightValue, "wall_height", "wall_height_m"))
+                    wallHeight = Math.Max(0f, wallHeightValue);
+
+                var collisionMode = TrackWallCollisionMode.Block;
+                if (TryGetString(area.Metadata, out var collisionRaw, "wall_collision", "wall_collision_mode", "collision", "collision_mode", "wall_mode") &&
+                    TryParseWallCollision(collisionRaw, out var parsedMode))
+                    collisionMode = parsedMode;
+
+                var resolvedMaterialId = ResolveAutoWallMaterialId(map, area);
+                var collisionMaterial = ResolveCollisionMaterial(map, resolvedMaterialId);
+
+                var points2D = ProjectToXZ(geometry.Points);
+                var pointCount = NormalizePolygonPointCount(points2D);
+                if (pointCount < 3)
+                    continue;
+
+                var isCounterClockwise = ComputeSignedArea(points2D, pointCount) > 0f;
+                var sampleDistance = Math.Max(0.25f, Math.Min(1.0f, width > 0f ? width * 0.5f : 0.5f));
+
+                var edgeIndex = 0;
+                for (var i = 0; i < pointCount; i++)
+                {
+                    var nextIndex = i + 1;
+                    if (nextIndex >= pointCount)
+                        nextIndex = 0;
+
+                    var a = points2D[i];
+                    var b = points2D[nextIndex];
+                    if (Vector2.DistanceSquared(a, b) <= 0.0001f)
+                        continue;
+
+                    var normal = ComputeOutwardNormal(a, b, isCounterClockwise);
+                    var direction = ResolveDirection(normal);
+                    if (!edges.Contains(direction))
+                        continue;
+
+                    var midpoint = (a + b) * 0.5f;
+                    var sample = midpoint + (normal * sampleDistance);
+                    if (areaManager.Contains(area, sample))
+                    {
+                        normal = -normal;
+                        sample = midpoint + (normal * sampleDistance);
+                    }
+
+                    if (IsTouchingTrackArea(areaManager, area, sample))
+                        continue;
+
+                    var geometryId = CreateUniqueId(geometryIds, $"auto_wall_geom_{area.Id}_{edgeIndex}");
+                    var wallId = CreateUniqueId(wallIds, $"auto_wall_{area.Id}_{edgeIndex}");
+
+                    var wallGeometry = new GeometryDefinition(
+                        geometryId,
+                        GeometryType.Polyline,
+                        new[]
+                        {
+                            new Vector3(a.X, area.ElevationMeters, a.Y),
+                            new Vector3(b.X, area.ElevationMeters, b.Y)
+                        });
+                    map.AddGeometry(wallGeometry);
+
+                    var wall = new TrackWallDefinition(
+                        wallId,
+                        geometryId,
+                        width,
+                        area.ElevationMeters,
+                        collisionMaterial,
+                        collisionMode,
+                        name: null,
+                        metadata: null,
+                        heightMeters: wallHeight,
+                        materialId: resolvedMaterialId);
+                    map.AddWall(wall);
+                    edgeIndex++;
+                }
+            }
+        }
+
+        private static int NormalizePolygonPointCount(IReadOnlyList<Vector2> points)
+        {
+            if (points == null)
+                return 0;
+            var count = points.Count;
+            if (count < 3)
+                return count;
+            if (Vector2.DistanceSquared(points[0], points[count - 1]) <= 0.0001f)
+                count--;
+            return count;
+        }
+
+        private static float ComputeSignedArea(IReadOnlyList<Vector2> points, int count)
+        {
+            if (points == null || count < 3)
+                return 0f;
+            var area = 0f;
+            for (var i = 0; i < count; i++)
+            {
+                var j = i + 1;
+                if (j >= count)
+                    j = 0;
+                var a = points[i];
+                var b = points[j];
+                area += (a.X * b.Y) - (b.X * a.Y);
+            }
+            return area * 0.5f;
+        }
+
+        private static Vector2 ComputeOutwardNormal(Vector2 a, Vector2 b, bool isCounterClockwise)
+        {
+            var dx = b.X - a.X;
+            var dz = b.Y - a.Y;
+            var normal = isCounterClockwise ? new Vector2(dz, -dx) : new Vector2(-dz, dx);
+            var lengthSq = normal.LengthSquared();
+            if (lengthSq <= 0.000001f)
+                return Vector2.Zero;
+            return normal / (float)Math.Sqrt(lengthSq);
+        }
+
+        private static MapDirection ResolveDirection(Vector2 normal)
+        {
+            var absX = Math.Abs(normal.X);
+            var absZ = Math.Abs(normal.Y);
+            if (absX >= absZ)
+                return normal.X >= 0f ? MapDirection.East : MapDirection.West;
+            return normal.Y >= 0f ? MapDirection.North : MapDirection.South;
+        }
+
+        private static bool IsTouchingTrackArea(
+            TrackAreaManager areaManager,
+            TrackAreaDefinition currentArea,
+            Vector2 sample)
+        {
+            foreach (var area in areaManager.Areas)
+            {
+                if (area == null || ReferenceEquals(area, currentArea))
+                    continue;
+                if (!IsTrackArea(area))
+                    continue;
+                if (areaManager.Contains(area, sample))
+                    return true;
+            }
+            return false;
+        }
+
+        private static bool IsTrackArea(TrackAreaDefinition area)
+        {
+            if (area == null)
+                return false;
+            if (area.Type == TrackAreaType.Boundary || area.Type == TrackAreaType.OffTrack)
+                return false;
+            if (area.Type == TrackAreaType.Start || area.Type == TrackAreaType.Finish ||
+                area.Type == TrackAreaType.Checkpoint || area.Type == TrackAreaType.Intersection)
+                return false;
+            return true;
+        }
+
+        private static string ResolveAutoWallMaterialId(TrackMap map, TrackAreaDefinition area)
+        {
+            if (area?.Metadata != null &&
+                TryGetString(area.Metadata, out var materialId, "wall_material_id", "wall_material"))
+                return materialId;
+            if (!string.IsNullOrWhiteSpace(area?.MaterialId))
+                return area!.MaterialId!;
+            return map.DefaultMaterialId;
+        }
+
+        private static float ResolveWallHeight(TrackAreaDefinition area)
+        {
+            if (area == null)
+                return 2f;
+            if (area.CeilingHeightMeters.HasValue)
+                return Math.Max(0f, area.CeilingHeightMeters.Value - area.ElevationMeters);
+            return Math.Max(0f, area.HeightMeters);
+        }
+
+        private static HashSet<MapDirection> ParseWallEdges(IReadOnlyDictionary<string, string> metadata)
+        {
+            var edges = new HashSet<MapDirection>();
+            if (!TryGetString(metadata, out var raw, "wall_edges", "wall_edge", "wall_sides", "wall_side"))
+            {
+                edges.Add(MapDirection.North);
+                edges.Add(MapDirection.East);
+                edges.Add(MapDirection.South);
+                edges.Add(MapDirection.West);
+                return edges;
+            }
+
+            var tokens = raw.Split(new[] { ',', ';', '|', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var token in tokens)
+            {
+                var trimmed = token.Trim().ToLowerInvariant();
+                if (trimmed.Length == 0)
+                    continue;
+                switch (trimmed)
+                {
+                    case "all":
+                        edges.Add(MapDirection.North);
+                        edges.Add(MapDirection.East);
+                        edges.Add(MapDirection.South);
+                        edges.Add(MapDirection.West);
+                        return edges;
+                    case "none":
+                        return edges;
+                    case "n":
+                    case "north":
+                        edges.Add(MapDirection.North);
+                        break;
+                    case "e":
+                    case "east":
+                        edges.Add(MapDirection.East);
+                        break;
+                    case "s":
+                    case "south":
+                        edges.Add(MapDirection.South);
+                        break;
+                    case "w":
+                    case "west":
+                        edges.Add(MapDirection.West);
+                        break;
+                    case "ns":
+                    case "sn":
+                        edges.Add(MapDirection.North);
+                        edges.Add(MapDirection.South);
+                        break;
+                    case "ew":
+                    case "we":
+                        edges.Add(MapDirection.East);
+                        edges.Add(MapDirection.West);
+                        break;
+                }
+            }
+
+            if (edges.Count == 0)
+            {
+                edges.Add(MapDirection.North);
+                edges.Add(MapDirection.East);
+                edges.Add(MapDirection.South);
+                edges.Add(MapDirection.West);
+            }
+
+            return edges;
+        }
+
+        private static string CreateUniqueId(HashSet<string> existing, string baseId)
+        {
+            if (existing == null)
+                throw new ArgumentNullException(nameof(existing));
+            if (string.IsNullOrWhiteSpace(baseId))
+                baseId = "auto_wall";
+
+            var candidate = baseId.Trim();
+            var suffix = 1;
+            while (existing.Contains(candidate))
+            {
+                candidate = $"{baseId}_{suffix}";
+                suffix++;
+            }
+            existing.Add(candidate);
+            return candidate;
+        }
+
+        private static IReadOnlyList<Vector2> ProjectToXZ(IReadOnlyList<Vector3> points)
+        {
+            if (points == null || points.Count == 0)
+                return Array.Empty<Vector2>();
+
+            var projected = new List<Vector2>(points.Count);
+            foreach (var point in points)
+                projected.Add(new Vector2(point.X, point.Z));
+            return projected;
+        }
+
+        private static bool TryParseWallCollision(string raw, out TrackWallCollisionMode mode)
+        {
+            mode = TrackWallCollisionMode.Block;
+            if (string.IsNullOrWhiteSpace(raw))
+                return false;
+
+            var trimmed = raw.Trim().ToLowerInvariant();
+            switch (trimmed)
+            {
+                case "block":
+                case "solid":
+                case "stop":
+                    mode = TrackWallCollisionMode.Block;
+                    return true;
+                case "bounce":
+                case "rebound":
+                case "reflect":
+                    mode = TrackWallCollisionMode.Bounce;
+                    return true;
+                case "pass":
+                case "ignore":
+                case "none":
+                case "ghost":
+                    mode = TrackWallCollisionMode.Pass;
+                    return true;
+            }
+
+            return Enum.TryParse(raw, true, out mode);
+        }
+
+        private static bool TryGetBool(
+            IReadOnlyDictionary<string, string> metadata,
+            out bool value,
+            params string[] keys)
+        {
+            value = false;
+            if (metadata == null || metadata.Count == 0)
+                return false;
+
+            foreach (var key in keys)
+            {
+                if (!metadata.TryGetValue(key, out var raw) || string.IsNullOrWhiteSpace(raw))
+                    continue;
+                if (TryParseBool(raw, out value))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryParseBool(string raw, out bool value)
+        {
+            value = false;
+            if (string.IsNullOrWhiteSpace(raw))
+                return false;
+
+            var trimmed = raw.Trim().ToLowerInvariant();
+            switch (trimmed)
+            {
+                case "1":
+                case "true":
+                case "yes":
+                case "y":
+                case "on":
+                case "enable":
+                case "enabled":
+                    value = true;
+                    return true;
+                case "0":
+                case "false":
+                case "no":
+                case "n":
+                case "off":
+                case "disable":
+                case "disabled":
+                    value = false;
+                    return true;
+            }
+
+            return bool.TryParse(trimmed, out value);
         }
 
         private static TrackWallMaterial ResolveCollisionMaterial(TrackMap map, string? materialId)

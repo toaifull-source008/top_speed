@@ -33,7 +33,7 @@ namespace TopSpeed.Tracks.Volumes
             Size = size;
             Radius = radius;
             Height = height;
-            GeometryId = string.IsNullOrWhiteSpace(geometryId) ? null : geometryId.Trim();
+            GeometryId = string.IsNullOrWhiteSpace(geometryId) ? null : geometryId!.Trim();
             MinY = minY;
             MaxY = maxY;
             RotationDegrees = rotationDegrees;

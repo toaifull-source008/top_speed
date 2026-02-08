@@ -6,6 +6,7 @@
     <AssemblyName>Triangle</AssemblyName>
     <Platforms>AnyCPU;x64</Platforms>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591;1572;1573</NoWarn>
     <Authors>Christian Woltering</Authors>
     <AssemblyVersion>1.0.0</AssemblyVersion>
     <Version>1.0.0-beta5</Version>
