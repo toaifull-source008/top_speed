@@ -25,6 +25,7 @@ namespace TopSpeed.Tracks.Areas
             float? widthMeters = null,
             TrackAreaFlags flags = TrackAreaFlags.None,
             IReadOnlyDictionary<string, string>? metadata = null,
+            IReadOnlyList<string>? soundSourceIds = null,
             string? volumeId = null,
             string? surfaceId = null,
             float? volumeThicknessMeters = null,
@@ -64,6 +65,7 @@ namespace TopSpeed.Tracks.Areas
             WidthMeters = widthMeters;
             Flags = flags;
             Metadata = NormalizeMetadata(metadata);
+            SoundSourceIds = NormalizeIds(soundSourceIds);
             var trimmedVolume = volumeId?.Trim();
             VolumeId = string.IsNullOrWhiteSpace(trimmedVolume) ? null : trimmedVolume;
             var trimmedSurface = surfaceId?.Trim();
@@ -92,6 +94,7 @@ namespace TopSpeed.Tracks.Areas
         public float? WidthMeters { get; }
         public TrackAreaFlags Flags { get; }
         public IReadOnlyDictionary<string, string> Metadata { get; }
+        public IReadOnlyList<string> SoundSourceIds { get; }
         public string? VolumeId { get; }
         public string? SurfaceId { get; }
         public float? VolumeThicknessMeters { get; }
@@ -111,6 +114,20 @@ namespace TopSpeed.Tracks.Areas
             foreach (var pair in metadata)
                 copy[pair.Key] = pair.Value;
             return copy;
+        }
+
+        private static IReadOnlyList<string> NormalizeIds(IReadOnlyList<string>? values)
+        {
+            if (values == null || values.Count == 0)
+                return Array.Empty<string>();
+            var list = new List<string>(values.Count);
+            foreach (var raw in values)
+            {
+                if (string.IsNullOrWhiteSpace(raw))
+                    continue;
+                list.Add(raw.Trim());
+            }
+            return list;
         }
     }
 }

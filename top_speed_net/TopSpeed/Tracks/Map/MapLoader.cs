@@ -35,14 +35,26 @@ namespace TopSpeed.Tracks.Map
 
             if (nameOrPath.IndexOfAny(new[] { '\\', '/' }) >= 0)
             {
+                if (Directory.Exists(nameOrPath))
+                {
+                    path = Path.Combine(nameOrPath, "track" + MapExtension);
+                    return File.Exists(path);
+                }
+
                 path = nameOrPath;
                 return File.Exists(path) && LooksLikeMap(path);
             }
 
             if (!Path.HasExtension(nameOrPath))
             {
-                path = Path.Combine(AssetPaths.Root, "Tracks", nameOrPath + MapExtension);
-                return File.Exists(path);
+                var folderPath = Path.Combine(AssetPaths.Root, "Tracks", nameOrPath, "track" + MapExtension);
+                if (File.Exists(folderPath))
+                {
+                    path = folderPath;
+                    return true;
+                }
+
+                return false;
             }
 
             path = Path.Combine(AssetPaths.Root, "Tracks", nameOrPath);
@@ -56,6 +68,7 @@ namespace TopSpeed.Tracks.Map
                 throw new FileNotFoundException("Track map not found.", path);
 
             var definition = TrackMapFormat.Parse(path);
+            var mapRoot = Path.GetDirectoryName(path) ?? Path.Combine(AssetPaths.Root, "Tracks");
 
             var map = new TrackMap(definition.Metadata.Name, definition.Metadata.CellSizeMeters)
             {
@@ -75,7 +88,9 @@ namespace TopSpeed.Tracks.Map
                 StartZ = definition.Metadata.StartZ,
                 StartHeadingDegrees = definition.Metadata.StartHeadingDegrees,
                 StartHeading = definition.Metadata.StartHeading,
-                SurfaceResolutionMeters = definition.Metadata.SurfaceResolutionMeters
+                SurfaceResolutionMeters = definition.Metadata.SurfaceResolutionMeters,
+                RootDirectory = mapRoot,
+                MapPath = path
             };
 
             foreach (var sector in definition.Sectors)
@@ -108,6 +123,8 @@ namespace TopSpeed.Tracks.Map
                 map.AddBank(bank);
             foreach (var surface in definition.Surfaces)
                 map.AddSurface(surface);
+            foreach (var source in definition.SoundSources)
+                map.AddSoundSource(source);
 
             AddExplicitWalls(map, definition);
             AddAutoWalls(map, definition);
@@ -126,7 +143,7 @@ namespace TopSpeed.Tracks.Map
             if (nameOrPath.IndexOfAny(new[] { '\\', '/' }) >= 0)
                 return nameOrPath;
             if (!Path.HasExtension(nameOrPath))
-                return Path.Combine(AssetPaths.Root, "Tracks", nameOrPath + MapExtension);
+                return Path.Combine(AssetPaths.Root, "Tracks", nameOrPath, "track" + MapExtension);
             return Path.Combine(AssetPaths.Root, "Tracks", nameOrPath);
         }
 

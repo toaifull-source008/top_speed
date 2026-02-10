@@ -265,6 +265,11 @@ namespace TS.Audio
                 _streams[i].Update();
             }
 
+            for (int i = 0; i < sourceSnapshot.Length; i++)
+            {
+                sourceSnapshot[i].UpdateFade(deltaTime);
+            }
+
             if (!_systemConfig.UseHrtf)
                 return;
 

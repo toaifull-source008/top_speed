@@ -16,6 +16,12 @@ start_z=15
 start_heading=east
 safe_zone_ring=50
 
+[ambient: approach_global]
+path = sounds/ambient.wav
+global = true
+loop = true
+volume = 0.5
+
 # Geometry
 [geometry: corner_sw_zone]
 type=polygon

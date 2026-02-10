@@ -14,6 +14,9 @@ namespace TopSpeed.Core
         private readonly RaceSettings _settings;
         private readonly Dictionary<string, (DateTime LastWriteUtc, string Display)> _customTrackCache =
             new Dictionary<string, (DateTime LastWriteUtc, string Display)>(StringComparer.OrdinalIgnoreCase);
+        private List<string>? _customTrackFilesCache;
+        private DateTime _customTrackFilesLastScanUtc;
+        private static readonly TimeSpan CustomTrackScanThrottle = TimeSpan.FromSeconds(2);
 
         public RaceSelection(RaceSetup setup, RaceSettings settings)
         {
@@ -119,7 +122,38 @@ namespace TopSpeed.Core
             var root = Path.Combine(AssetPaths.Root, "Tracks");
             if (!Directory.Exists(root))
                 return Array.Empty<string>();
-            return Directory.EnumerateFiles(root, "*.tsm", SearchOption.TopDirectoryOnly);
+
+            var now = DateTime.UtcNow;
+            if (_customTrackFilesCache != null &&
+                (now - _customTrackFilesLastScanUtc) < CustomTrackScanThrottle)
+            {
+                return _customTrackFilesCache;
+            }
+
+            var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var picks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var file in Directory.EnumerateFiles(root, "*.tsm", SearchOption.AllDirectories))
+            {
+                var directory = Path.GetDirectoryName(file);
+                if (string.IsNullOrWhiteSpace(directory))
+                    continue;
+                var dirFull = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (string.Equals(dirFull, rootFull, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!picks.TryGetValue(dirFull, out var existing))
+                {
+                    picks[dirFull] = file;
+                    continue;
+                }
+
+                if (string.Compare(Path.GetFileName(file), Path.GetFileName(existing), StringComparison.OrdinalIgnoreCase) < 0)
+                    picks[dirFull] = file;
+            }
+
+            _customTrackFilesCache = picks.Values.ToList();
+            _customTrackFilesLastScanUtc = now;
+            return _customTrackFilesCache;
         }
 
         public IEnumerable<string> GetCustomMapTrackFiles()

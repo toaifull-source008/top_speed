@@ -14,6 +14,7 @@ using TopSpeed.Tracks.Surfaces;
 using TopSpeed.Tracks.Rooms;
 using TopSpeed.Tracks.Sectors;
 using TopSpeed.Tracks.Topology;
+using TopSpeed.Tracks.Sounds;
 using TopSpeed.Tracks.Volumes;
 using TopSpeed.Tracks.Walls;
 using TS.Audio;
@@ -67,6 +68,7 @@ namespace TopSpeed.Tracks.Map
         private readonly TrackWallManager _wallManager;
         private readonly TrackMeshCollisionManager _meshCollisionManager;
         private readonly TrackSurfaceSystem _surfaceSystem;
+        private readonly TrackSoundSourceSystem _soundSourceSystem;
         private readonly bool _hasSurfaces;
         private readonly string _trackName;
         private readonly bool _userDefined;
@@ -113,6 +115,7 @@ namespace TopSpeed.Tracks.Map
             _meshCollisionManager = new TrackMeshCollisionManager(map.Geometries, map.Materials);
             _surfaceSystem = map.BuildSurfaceSystem();
             _hasSurfaces = _surfaceSystem.Surfaces.Count > 0;
+            _soundSourceSystem = new TrackSoundSourceSystem(map, _areaManager, _audio);
             _trackLength = ResolveTrackLength();
             InitializeSounds();
             InitializeSteamAudioScene();
@@ -490,6 +493,7 @@ namespace TopSpeed.Tracks.Map
         {
             _currentNoise = TrackNoise.NoNoise;
             _beaconCooldown = 0f;
+            _soundSourceSystem.Initialize();
         }
 
         public void Run(MapMovementState state, float elapsed)
@@ -499,7 +503,10 @@ namespace TopSpeed.Tracks.Map
             var safeZone = false;
             var length = _map.CellSizeMeters;
             var width = Math.Max(0.5f, _map.DefaultWidthMeters);
-            ApplyAreaOverrides(state.WorldPosition, state.HeadingDegrees, ref width, ref length, ref materialId, ref noise, ref safeZone);
+            var areas = _areaManager != null
+                ? _areaManager.FindAreasContaining(state.WorldPosition)
+                : (IReadOnlyList<TrackAreaDefinition>)Array.Empty<TrackAreaDefinition>();
+            ApplyAreaOverrides(state.WorldPosition, state.HeadingDegrees, areas, ref width, ref length, ref materialId, ref noise, ref safeZone);
             if (noise != _currentNoise)
             {
                 StopNoise(_currentNoise);
@@ -508,8 +515,8 @@ namespace TopSpeed.Tracks.Map
 
             UpdateNoiseLoop(noise);
             UpdateApproachBeacon(state, elapsed);
-            UpdateRoomAcoustics(state.WorldPosition);
-
+            UpdateRoomAcoustics(areas);
+            _soundSourceSystem.Update(state.WorldPosition, elapsed, areas);
             if (_map.Weather == TrackWeather.Rain)
                 PlayIfNotPlaying(_soundRain);
             else
@@ -539,11 +546,13 @@ namespace TopSpeed.Tracks.Map
         public void FinalizeTrack()
         {
             StopAllSounds();
+            _soundSourceSystem.StopAll();
         }
 
         public void Dispose()
         {
             FinalizeTrack();
+            _soundSourceSystem.Dispose();
             _audio.SteamAudio?.ClearScene();
             _steamAudioScene?.Dispose();
             DisposeSound(_soundCrowd);
@@ -597,7 +606,23 @@ namespace TopSpeed.Tracks.Map
                 return;
 
             var areas = _areaManager.FindAreasContaining(worldPosition);
-            if (areas.Count == 0)
+            ApplyAreaOverrides(worldPosition, headingDegrees, areas, ref width, ref length, ref materialId, ref noise, ref safeZone);
+        }
+
+        private void ApplyAreaOverrides(
+            Vector3 worldPosition,
+            float headingDegrees,
+            IReadOnlyList<TrackAreaDefinition> areas,
+            ref float width,
+            ref float length,
+            ref string materialId,
+            ref TrackNoise noise,
+            ref bool safeZone)
+        {
+            var heading = MapMovement.ToCardinal(headingDegrees);
+            ApplySectorOverrides(worldPosition, heading, ref width, ref length, ref materialId, ref noise, ref safeZone);
+
+            if (areas == null || areas.Count == 0)
                 return;
 
             TrackAreaDefinition? surfaceArea = null;
@@ -634,7 +659,19 @@ namespace TopSpeed.Tracks.Map
 
         private void UpdateRoomAcoustics(Vector3 worldPosition)
         {
-            var acoustics = ResolveRoomAcoustics(worldPosition);
+            if (_areaManager == null)
+            {
+                UpdateRoomAcoustics(Array.Empty<TrackAreaDefinition>());
+                return;
+            }
+
+            var areas = _areaManager.FindAreasContaining(worldPosition);
+            UpdateRoomAcoustics(areas);
+        }
+
+        private void UpdateRoomAcoustics(IReadOnlyList<TrackAreaDefinition> areas)
+        {
+            var acoustics = ResolveRoomAcoustics(areas);
             if (!_hasRoomAcoustics || !RoomAcousticsEquals(_currentRoomAcoustics, acoustics))
             {
                 _audio.SetRoomAcoustics(acoustics);
@@ -649,7 +686,12 @@ namespace TopSpeed.Tracks.Map
                 return RoomAcoustics.Default;
 
             var areas = _areaManager.FindAreasContaining(worldPosition);
-            if (areas.Count == 0)
+            return ResolveRoomAcoustics(areas);
+        }
+
+        private RoomAcoustics ResolveRoomAcoustics(IReadOnlyList<TrackAreaDefinition> areas)
+        {
+            if (areas == null || areas.Count == 0)
                 return RoomAcoustics.Default;
 
             TrackAreaDefinition? roomArea = null;

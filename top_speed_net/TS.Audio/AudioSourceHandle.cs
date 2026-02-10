@@ -94,6 +94,13 @@ namespace TS.Audio
         private ma_sound_end_proc? _endCallback;
         private GCHandle _endHandle;
         private Action? _onEnd;
+        private float _userVolume = 1.0f;
+        private float _currentVolume = 1.0f;
+        private float _fadeDuration;
+        private float _fadeRemaining;
+        private float _fadeStartVolume;
+        private float _fadeTargetVolume;
+        private bool _stopAfterFade;
 
         public AudioSourceHandle(AudioOutput output, string filePath, bool streamFromDisk, bool useHrtf = true)
             : this(output, filePath, streamFromDisk, spatialize: useHrtf, useHrtf: useHrtf)
@@ -115,6 +122,7 @@ namespace TS.Audio
                 throw new InvalidOperationException("Failed to init sound: " + init);
 
             CacheFormat();
+            InitializeVolumeState();
             _spatializer = _output.SteamAudio != null ? new SteamAudioSpatializer(_output.SteamAudio, _output.PeriodSizeInFrames, _trueStereoHrtf, _output.DownmixMode) : null;
             _useHrtf = _spatialize && useHrtf && _output.SteamAudio != null;
 
@@ -155,6 +163,7 @@ namespace TS.Audio
             _spatialize = spatialize;
 
             CacheFormat();
+            InitializeVolumeState();
             _spatializer = _output.SteamAudio != null ? new SteamAudioSpatializer(_output.SteamAudio, _output.PeriodSizeInFrames, _trueStereoHrtf, _output.DownmixMode) : null;
             _useHrtf = _spatialize && useHrtf && _output.SteamAudio != null;
 
@@ -181,20 +190,94 @@ namespace TS.Audio
 
         public void Play(bool loop)
         {
+            Play(loop, 0f);
+        }
+
+        public void Play(bool loop, float fadeInSeconds)
+        {
             _sound.SetLooping(loop);
-            _sound.Start();
+            if (fadeInSeconds <= 0f)
+            {
+                CancelFade();
+                _currentVolume = _userVolume;
+                _sound.SetVolume(_currentVolume);
+                _sound.Start();
+                return;
+            }
+
+            if (!_sound.IsPlaying())
+            {
+                _currentVolume = 0f;
+                _sound.SetVolume(0f);
+                _sound.Start();
+            }
+
+            BeginFade(_userVolume, fadeInSeconds, stopAfter: false);
         }
 
         public void Stop()
         {
-            _sound.Stop();
+            Stop(0f);
+        }
+
+        public void Stop(float fadeOutSeconds)
+        {
+            if (fadeOutSeconds <= 0f || !_sound.IsPlaying())
+            {
+                CancelFade();
+                _sound.Stop();
+                return;
+            }
+
+            BeginFade(0f, fadeOutSeconds, stopAfter: true);
+        }
+
+        public void FadeIn(float seconds)
+        {
+            if (seconds <= 0f)
+            {
+                CancelFade();
+                _currentVolume = _userVolume;
+                _sound.SetVolume(_currentVolume);
+                if (!_sound.IsPlaying())
+                    _sound.Start();
+                return;
+            }
+
+            if (!_sound.IsPlaying())
+            {
+                _currentVolume = 0f;
+                _sound.SetVolume(0f);
+                _sound.Start();
+            }
+
+            BeginFade(_userVolume, seconds, stopAfter: false);
+        }
+
+        public void FadeOut(float seconds)
+        {
+            if (seconds <= 0f)
+            {
+                Stop();
+                return;
+            }
+
+            BeginFade(0f, seconds, stopAfter: true);
         }
 
         public bool IsPlaying => _sound.IsPlaying();
 
         public void SetVolume(float volume)
         {
-            _sound.SetVolume(volume);
+            _userVolume = volume;
+            if (_fadeRemaining > 0f && !_stopAfterFade)
+            {
+                _fadeTargetVolume = _userVolume;
+                return;
+            }
+
+            _currentVolume = _userVolume;
+            _sound.SetVolume(_currentVolume);
         }
 
         public float GetVolume()
@@ -504,6 +587,33 @@ namespace TS.Audio
             _sound.SetPitch(_basePitch * doppler);
         }
 
+        internal void UpdateFade(double deltaTime)
+        {
+            if (_fadeRemaining <= 0f)
+                return;
+
+            var step = (float)deltaTime;
+            if (step <= 0f)
+                return;
+
+            _fadeRemaining -= step;
+            var t = _fadeDuration <= 0f ? 1f : 1f - (_fadeRemaining / _fadeDuration);
+            if (t < 0f) t = 0f;
+            if (t > 1f) t = 1f;
+
+            _currentVolume = _fadeStartVolume + (_fadeTargetVolume - _fadeStartVolume) * t;
+            _sound.SetVolume(_currentVolume);
+
+            if (t >= 1f)
+            {
+                _fadeRemaining = 0f;
+                _currentVolume = _fadeTargetVolume;
+                if (_stopAfterFade && _currentVolume <= 0.0001f)
+                    _sound.Stop();
+                _stopAfterFade = false;
+            }
+        }
+
         public void Dispose()
         {
             _output.RemoveSource(this);
@@ -567,6 +677,35 @@ namespace TS.Audio
             var onEnd = source._onEnd;
             if (onEnd != null)
                 ThreadPool.QueueUserWorkItem(_ => onEnd());
+        }
+
+        private void InitializeVolumeState()
+        {
+            _userVolume = _sound.GetVolume();
+            _currentVolume = _userVolume;
+            _fadeDuration = 0f;
+            _fadeRemaining = 0f;
+            _fadeStartVolume = _currentVolume;
+            _fadeTargetVolume = _currentVolume;
+            _stopAfterFade = false;
+        }
+
+        private void BeginFade(float targetVolume, float durationSeconds, bool stopAfter)
+        {
+            _fadeDuration = Math.Max(0.0001f, durationSeconds);
+            _fadeRemaining = _fadeDuration;
+            _fadeStartVolume = _currentVolume;
+            _fadeTargetVolume = targetVolume;
+            _stopAfterFade = stopAfter;
+        }
+
+        private void CancelFade()
+        {
+            _fadeDuration = 0f;
+            _fadeRemaining = 0f;
+            _fadeStartVolume = _currentVolume;
+            _fadeTargetVolume = _currentVolume;
+            _stopAfterFade = false;
         }
     }
 }

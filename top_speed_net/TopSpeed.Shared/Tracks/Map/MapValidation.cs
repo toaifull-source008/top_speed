@@ -7,6 +7,7 @@ using System.Numerics;
 using TopSpeed.Data;
 using TopSpeed.Tracks.Materials;
 using TopSpeed.Tracks.Rooms;
+using TopSpeed.Tracks.Sounds;
 using TopSpeed.Tracks.Areas;
 using TopSpeed.Tracks.Beacons;
 using TopSpeed.Tracks.Guidance;
@@ -131,6 +132,7 @@ namespace TopSpeed.Tracks.Map
             Walls = Array.Empty<TrackWallDefinition>();
             Materials = Array.Empty<TrackMaterialDefinition>();
             Rooms = Array.Empty<TrackRoomDefinition>();
+            SoundSources = Array.Empty<TrackSoundSourceDefinition>();
         }
 
         public TrackMapDefinition(
@@ -150,7 +152,8 @@ namespace TopSpeed.Tracks.Map
             List<TrackBranchDefinition> branches,
             List<TrackWallDefinition> walls,
             List<TrackMaterialDefinition> materials,
-            List<TrackRoomDefinition> rooms)
+            List<TrackRoomDefinition> rooms,
+            List<TrackSoundSourceDefinition> soundSources)
         {
             Metadata = metadata;
             Sectors = sectors ?? new List<TrackSectorDefinition>();
@@ -169,6 +172,7 @@ namespace TopSpeed.Tracks.Map
             Walls = walls ?? new List<TrackWallDefinition>();
             Materials = materials ?? new List<TrackMaterialDefinition>();
             Rooms = rooms ?? new List<TrackRoomDefinition>();
+            SoundSources = soundSources ?? new List<TrackSoundSourceDefinition>();
         }
 
         public TrackMapMetadata Metadata { get; }
@@ -188,6 +192,7 @@ namespace TopSpeed.Tracks.Map
         public IReadOnlyList<TrackWallDefinition> Walls { get; }
         public IReadOnlyList<TrackMaterialDefinition> Materials { get; }
         public IReadOnlyList<TrackRoomDefinition> Rooms { get; }
+        public IReadOnlyList<TrackSoundSourceDefinition> SoundSources { get; }
     }
 
     public static class TrackMapFormat
@@ -271,7 +276,11 @@ namespace TopSpeed.Tracks.Map
             "flags",
             "flag",
             "caps",
-            "capabilities"
+            "capabilities",
+            "sources",
+            "source",
+            "sound_sources",
+            "sound_source"
         };
         private static readonly HashSet<string> GeometryKnownKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -608,14 +617,26 @@ namespace TopSpeed.Tracks.Map
 
             if (nameOrPath.IndexOfAny(new[] { '\\', '/' }) >= 0)
             {
+                if (Directory.Exists(nameOrPath))
+                {
+                    path = Path.Combine(nameOrPath, "track" + MapExtension);
+                    return File.Exists(path);
+                }
+
                 path = nameOrPath;
                 return File.Exists(path) && LooksLikeMap(path);
             }
 
             if (!Path.HasExtension(nameOrPath))
             {
-                path = Path.Combine(AppContext.BaseDirectory, "Tracks", nameOrPath + MapExtension);
-                return File.Exists(path);
+                var folderPath = Path.Combine(AppContext.BaseDirectory, "Tracks", nameOrPath, "track" + MapExtension);
+                if (File.Exists(folderPath))
+                {
+                    path = folderPath;
+                    return true;
+                }
+
+                return false;
             }
 
             path = Path.Combine(AppContext.BaseDirectory, "Tracks", nameOrPath);
@@ -650,8 +671,10 @@ namespace TopSpeed.Tracks.Map
             var branches = new List<TrackBranchDefinition>();
             var materials = new List<TrackMaterialDefinition>();
             var rooms = new List<TrackRoomDefinition>();
+            var soundSources = new List<TrackSoundSourceDefinition>();
             var guideBlocks = new List<SectionBlock>();
             var branchBlocks = new List<SectionBlock>();
+            var mapRoot = Path.GetDirectoryName(path) ?? AppContext.BaseDirectory;
 
             var blocks = ReadBlocks(path, issues);
             foreach (var block in blocks)
@@ -724,6 +747,21 @@ namespace TopSpeed.Tracks.Map
                     case "material":
                         ApplyMaterial(materials, block, issues);
                         break;
+                    case "ambient":
+                        ApplySoundSource(soundSources, block, TrackSoundSourceType.Ambient, mapRoot, issues);
+                        break;
+                    case "static_source":
+                    case "static":
+                        ApplySoundSource(soundSources, block, TrackSoundSourceType.Static, mapRoot, issues);
+                        break;
+                    case "moving_source":
+                    case "moving":
+                        ApplySoundSource(soundSources, block, TrackSoundSourceType.Moving, mapRoot, issues);
+                        break;
+                    case "random_source":
+                    case "random":
+                        ApplySoundSource(soundSources, block, TrackSoundSourceType.Random, mapRoot, issues);
+                        break;
                     case "acoustic_material":
                         issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, "acoustic_material sections are not supported. Use [material] instead.", block.StartLine));
                         break;
@@ -745,8 +783,9 @@ namespace TopSpeed.Tracks.Map
                 ApplyBranches(branchBlocks, sectors, areas, portals, branches, issues);
 
             ValidateVolumeReferences(volumes, areas, portals, beacons, markers, approaches, geometries, issues);
+            ValidateSoundSourceReferences(soundSources, areas, geometries, issues);
 
-            map = new TrackMapDefinition(metadata, sectors, areas, geometries, volumes, surfaces, profiles, banks, portals, links, beacons, markers, approaches, branches, walls, materials, rooms);
+            map = new TrackMapDefinition(metadata, sectors, areas, geometries, volumes, surfaces, profiles, banks, portals, links, beacons, markers, approaches, branches, walls, materials, rooms, soundSources);
             return issues.All(issue => issue.Severity != TrackMapIssueSeverity.Error);
         }
 
@@ -1983,6 +2022,8 @@ namespace TopSpeed.Tracks.Map
             if (HasBranchKeys(block))
                 issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Area '{id}' contains branch keys. Use a [branch] section instead.", block.StartLine));
 
+            var soundSourceIds = ParseStringListFromBlock(block, "sources", "source", "sound_sources", "sound_source");
+
             areas.Add(new TrackAreaDefinition(
                 id,
                 areaType,
@@ -1998,6 +2039,7 @@ namespace TopSpeed.Tracks.Map
                 width,
                 flags,
                 areaMetadata,
+                soundSourceIds,
                 volumeId,
                 surfaceId,
                 volumeThickness,
@@ -3441,6 +3483,210 @@ namespace TopSpeed.Tracks.Map
             }
         }
 
+        private static void ValidateSoundSourceReferences(
+            List<TrackSoundSourceDefinition> soundSources,
+            List<TrackAreaDefinition> areas,
+            List<GeometryDefinition> geometries,
+            List<TrackMapIssue> issues)
+        {
+            if (issues == null)
+                return;
+
+            var sourceLookup = new Dictionary<string, TrackSoundSourceDefinition>(StringComparer.OrdinalIgnoreCase);
+            if (soundSources != null)
+            {
+                foreach (var source in soundSources)
+                {
+                    if (source == null || string.IsNullOrWhiteSpace(source.Id))
+                        continue;
+                    sourceLookup[source.Id] = source;
+                }
+            }
+
+            var geometryLookup = new Dictionary<string, GeometryDefinition>(StringComparer.OrdinalIgnoreCase);
+            if (geometries != null)
+            {
+                foreach (var geometry in geometries)
+                {
+                    if (geometry == null || string.IsNullOrWhiteSpace(geometry.Id))
+                        continue;
+                    geometryLookup[geometry.Id] = geometry;
+                }
+            }
+
+            var areaLookup = new Dictionary<string, TrackAreaDefinition>(StringComparer.OrdinalIgnoreCase);
+            if (areas != null)
+            {
+                foreach (var area in areas)
+                {
+                    if (area == null || string.IsNullOrWhiteSpace(area.Id))
+                        continue;
+                    areaLookup[area.Id] = area;
+                }
+            }
+
+            if (areas != null)
+            {
+                foreach (var area in areas)
+                {
+                    if (area == null || area.SoundSourceIds == null)
+                        continue;
+                    foreach (var id in area.SoundSourceIds)
+                    {
+                        if (string.IsNullOrWhiteSpace(id))
+                            continue;
+                        if (!sourceLookup.ContainsKey(id))
+                        {
+                            issues.Add(new TrackMapIssue(
+                                TrackMapIssueSeverity.Error,
+                                $"Area '{area.Id}' references unknown sound source '{id}'."));
+                        }
+                    }
+                }
+            }
+
+            var referencedByRandom = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (soundSources != null)
+            {
+                foreach (var source in soundSources)
+                {
+                    if (source == null)
+                        continue;
+                    foreach (var candidate in source.VariantSourceIds)
+                    {
+                        if (!string.IsNullOrWhiteSpace(candidate))
+                            referencedByRandom.Add(candidate);
+                    }
+                }
+            }
+
+            if (soundSources == null)
+                return;
+
+            foreach (var source in soundSources)
+            {
+                if (source == null)
+                    continue;
+
+                if (source.Type == TrackSoundSourceType.Random)
+                {
+                    if ((source.VariantPaths == null || source.VariantPaths.Count == 0) &&
+                        (source.VariantSourceIds == null || source.VariantSourceIds.Count == 0) &&
+                        string.IsNullOrWhiteSpace(source.Path))
+                    {
+                        issues.Add(new TrackMapIssue(
+                            TrackMapIssueSeverity.Error,
+                            $"Random sound source '{source.Id}' requires variants or a path."));
+                    }
+                }
+                else
+                {
+                    if (string.IsNullOrWhiteSpace(source.Path))
+                    {
+                        issues.Add(new TrackMapIssue(
+                            TrackMapIssueSeverity.Error,
+                            $"Sound source '{source.Id}' requires a path."));
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(source.GeometryId) &&
+                    !geometryLookup.ContainsKey(source.GeometryId!))
+                {
+                    issues.Add(new TrackMapIssue(
+                        TrackMapIssueSeverity.Error,
+                        $"Sound source '{source.Id}' references unknown geometry '{source.GeometryId}'."));
+                }
+
+                if (!string.IsNullOrWhiteSpace(source.PathGeometryId))
+                {
+                    if (!geometryLookup.TryGetValue(source.PathGeometryId!, out var geometry))
+                    {
+                        issues.Add(new TrackMapIssue(
+                            TrackMapIssueSeverity.Error,
+                            $"Sound source '{source.Id}' references unknown path geometry '{source.PathGeometryId}'."));
+                    }
+                    else if (source.Type == TrackSoundSourceType.Moving &&
+                             geometry.Type != GeometryType.Polyline &&
+                             geometry.Type != GeometryType.Spline &&
+                             geometry.Type != GeometryType.Polygon)
+                    {
+                        issues.Add(new TrackMapIssue(
+                            TrackMapIssueSeverity.Error,
+                            $"Moving sound source '{source.Id}' requires polyline/spline/polygon geometry '{source.PathGeometryId}'."));
+                    }
+                }
+                else if (source.Type == TrackSoundSourceType.Moving)
+                {
+                    issues.Add(new TrackMapIssue(
+                        TrackMapIssueSeverity.Error,
+                        $"Moving sound source '{source.Id}' requires path_geometry."));
+                }
+
+                if (!string.IsNullOrWhiteSpace(source.StartAreaId) &&
+                    !areaLookup.ContainsKey(source.StartAreaId!))
+                {
+                    issues.Add(new TrackMapIssue(
+                        TrackMapIssueSeverity.Error,
+                        $"Sound source '{source.Id}' references unknown start area '{source.StartAreaId}'."));
+                }
+
+                if (!string.IsNullOrWhiteSpace(source.EndAreaId) &&
+                    !areaLookup.ContainsKey(source.EndAreaId!))
+                {
+                    issues.Add(new TrackMapIssue(
+                        TrackMapIssueSeverity.Error,
+                        $"Sound source '{source.Id}' references unknown end area '{source.EndAreaId}'."));
+                }
+
+                if (source.VariantSourceIds != null && source.VariantSourceIds.Count > 0)
+                {
+                    foreach (var variantId in source.VariantSourceIds)
+                    {
+                        if (string.IsNullOrWhiteSpace(variantId))
+                            continue;
+                        if (!sourceLookup.ContainsKey(variantId))
+                        {
+                            issues.Add(new TrackMapIssue(
+                                TrackMapIssueSeverity.Error,
+                                $"Sound source '{source.Id}' references unknown variant source '{variantId}'."));
+                        }
+                        else if (string.Equals(source.Id, variantId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            issues.Add(new TrackMapIssue(
+                                TrackMapIssueSeverity.Error,
+                                $"Sound source '{source.Id}' cannot reference itself as a variant."));
+                        }
+                    }
+                }
+
+                var hasStartEnd = !string.IsNullOrWhiteSpace(source.StartAreaId) ||
+                                  !string.IsNullOrWhiteSpace(source.EndAreaId) ||
+                                  source.StartPosition.HasValue ||
+                                  source.EndPosition.HasValue;
+                var isReferencedByArea = false;
+                if (areas != null)
+                {
+                    foreach (var area in areas)
+                    {
+                        if (area == null || area.SoundSourceIds == null)
+                            continue;
+                        if (area.SoundSourceIds.Any(id => string.Equals(id, source.Id, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            isReferencedByArea = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!source.Global && !hasStartEnd && !isReferencedByArea && !referencedByRandom.Contains(source.Id))
+                {
+                    issues.Add(new TrackMapIssue(
+                        TrackMapIssueSeverity.Warning,
+                        $"Sound source '{source.Id}' is not referenced by any area and has no start/end; it will not play."));
+                }
+            }
+        }
+
         private static void ApplyWall(
             TrackMapMetadata metadata,
             List<TrackWallDefinition> walls,
@@ -3687,6 +3933,212 @@ namespace TopSpeed.Tracks.Map
                 hasAirAbsorptionOverride ? airOverrideHigh : preset?.AirAbsorptionOverrideHigh));
         }
 
+        private static void ApplySoundSource(
+            List<TrackSoundSourceDefinition> soundSources,
+            SectionBlock block,
+            TrackSoundSourceType type,
+            string mapRoot,
+            List<TrackMapIssue> issues)
+        {
+            if (!TryReadId(block, out var id))
+            {
+                issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, "Sound source requires an id.", block.StartLine));
+                return;
+            }
+
+            if (soundSources.Any(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase)))
+            {
+                issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Duplicate sound source id '{id}'.", block.StartLine));
+                return;
+            }
+
+            string? path = null;
+            if (TryGetValueAny(block, out var pathValue, "path", "file", "sound", "audio", "sound_path", "audio_path"))
+                path = pathValue;
+            if (string.IsNullOrWhiteSpace(path))
+                path = null;
+
+            var variantPaths = ParseStringListFromBlock(block, "variants", "variant", "variant_paths", "variant_path");
+            var variantSourceIds = ParseStringListFromBlock(block, "variant_sources", "variant_source", "variant_source_ids", "variant_sources_ids");
+
+            var randomMode = TrackSoundRandomMode.OnStart;
+            if (TryGetValueAny(block, out var randomModeRaw, "random_mode", "random"))
+            {
+                if (!TryParseSoundRandomMode(randomModeRaw, out randomMode))
+                {
+                    issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Sound source '{id}' has invalid random_mode '{randomModeRaw}'.", block.StartLine));
+                    return;
+                }
+            }
+
+            var loop = type == TrackSoundSourceType.Ambient ||
+                       type == TrackSoundSourceType.Static ||
+                       type == TrackSoundSourceType.Moving;
+            if (TryGetValueAny(block, out var loopRaw, "loop", "looping", "repeat"))
+            {
+                if (!TryBool(loopRaw, out loop))
+                {
+                    issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Sound source '{id}' has invalid loop value '{loopRaw}'.", block.StartLine));
+                    return;
+                }
+            }
+
+            var volume = 1f;
+            if (TryFloatAny(block, out var volumeValue, "volume", "gain", "level"))
+                volume = Clamp01(volumeValue);
+
+            var spatial = type != TrackSoundSourceType.Ambient;
+            if (TryGetValueAny(block, out var spatialRaw, "spatial", "positional", "spatialize"))
+            {
+                if (!TryBool(spatialRaw, out spatial))
+                {
+                    issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Sound source '{id}' has invalid spatial value '{spatialRaw}'.", block.StartLine));
+                    return;
+                }
+            }
+
+            var allowHrtf = spatial;
+            if (TryGetValueAny(block, out var hrtfRaw, "hrtf", "allow_hrtf", "use_hrtf"))
+            {
+                if (!TryBool(hrtfRaw, out allowHrtf))
+                {
+                    issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Sound source '{id}' has invalid hrtf value '{hrtfRaw}'.", block.StartLine));
+                    return;
+                }
+            }
+
+            var useReflections = false;
+            if (TryGetValueAny(block, out var reflectionsRaw, "reflections", "use_reflections"))
+            {
+                if (!TryBool(reflectionsRaw, out useReflections))
+                {
+                    issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Sound source '{id}' has invalid reflections value '{reflectionsRaw}'.", block.StartLine));
+                    return;
+                }
+            }
+
+            var useBakedReflections = false;
+            if (TryGetValueAny(block, out var bakedRaw, "baked_reflections", "use_baked_reflections"))
+            {
+                if (!TryBool(bakedRaw, out useBakedReflections))
+                {
+                    issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Sound source '{id}' has invalid baked_reflections value '{bakedRaw}'.", block.StartLine));
+                    return;
+                }
+            }
+            if (useBakedReflections)
+                useReflections = true;
+
+            var fadeInSeconds = TryFloatAny(block, out var fadeInValue, "fade_in", "fadein", "fade_in_seconds")
+                ? Math.Max(0f, fadeInValue)
+                : 0f;
+            var fadeOutSeconds = TryFloatAny(block, out var fadeOutValue, "fade_out", "fadeout", "fade_out_seconds")
+                ? Math.Max(0f, fadeOutValue)
+                : 0f;
+            var crossfadeSeconds = TryFloatAny(block, out var crossfadeValue, "crossfade", "crossfade_seconds", "crossfade_time")
+                ? Math.Max(0f, crossfadeValue)
+                : (float?)null;
+
+            var pitch = TryFloatAny(block, out var pitchValue, "pitch", "playback_rate", "playback_speed", "rate")
+                ? (pitchValue <= 0f ? 1.0f : pitchValue)
+                : 1.0f;
+            var pan = TryFloatAny(block, out var panValue, "pan", "balance")
+                ? Math.Max(-1f, Math.Min(1f, panValue))
+                : 0f;
+
+            var minDistance = TryFloatAny(block, out var minDistanceValue, "min_distance", "min_dist", "ref_distance", "reference_distance")
+                ? Math.Max(0.001f, minDistanceValue)
+                : (float?)null;
+            var maxDistance = TryFloatAny(block, out var maxDistanceValue, "max_distance", "max_dist")
+                ? Math.Max(0.001f, maxDistanceValue)
+                : (float?)null;
+            var rolloff = TryFloatAny(block, out var rolloffValue, "rolloff", "rolloff_factor", "rolloff_scale")
+                ? Math.Max(0f, rolloffValue)
+                : (float?)null;
+
+            var global = false;
+            if (TryGetValueAny(block, out var globalRaw, "global", "always", "always_on"))
+            {
+                if (!TryBool(globalRaw, out global))
+                {
+                    issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Sound source '{id}' has invalid global value '{globalRaw}'.", block.StartLine));
+                    return;
+                }
+            }
+
+            var startAreaId = TryGetValueAny(block, out var startAreaValue, "start_area", "start_area_id") ? startAreaValue : null;
+            var endAreaId = TryGetValueAny(block, out var endAreaValue, "end_area", "end_area_id") ? endAreaValue : null;
+
+            var startPosition = TryParsePosition(block, "start", out var startPos) ? startPos : (Vector3?)null;
+            var startRadius = TryFloatAny(block, out var startRadiusValue, "start_radius", "start_range")
+                ? Math.Max(0f, startRadiusValue)
+                : (float?)null;
+            var endPosition = TryParsePosition(block, "end", out var endPos) ? endPos : (Vector3?)null;
+            var endRadius = TryFloatAny(block, out var endRadiusValue, "end_radius", "end_range")
+                ? Math.Max(0f, endRadiusValue)
+                : (float?)null;
+            var position = TryParsePosition(block, out var pos) ? pos : (Vector3?)null;
+
+            var geometryId = TryGetValueAny(block, out var geometryValue, "geometry", "geometry_id") ? geometryValue : null;
+            var pathGeometryId = TryGetValueAny(block, out var pathGeometryValue, "path_geometry", "path_geometry_id") ? pathGeometryValue : null;
+            if (type == TrackSoundSourceType.Moving && string.IsNullOrWhiteSpace(pathGeometryId))
+                pathGeometryId = geometryId;
+
+            var speed = TryFloatAny(block, out var speedValue, "speed", "speed_mps", "velocity")
+                ? Math.Max(0f, speedValue)
+                : (float?)null;
+
+            if (path != null && !IsTrackRelativePath(path, mapRoot))
+            {
+                issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Sound source '{id}' path must be relative to the track folder.", block.StartLine));
+                return;
+            }
+            if (variantPaths.Count > 0)
+            {
+                for (int i = 0; i < variantPaths.Count; i++)
+                {
+                    if (!IsTrackRelativePath(variantPaths[i], mapRoot))
+                    {
+                        issues.Add(new TrackMapIssue(TrackMapIssueSeverity.Error, $"Sound source '{id}' variant path must be relative to the track folder.", block.StartLine));
+                        return;
+                    }
+                }
+            }
+
+            soundSources.Add(new TrackSoundSourceDefinition(
+                id,
+                type,
+                path,
+                variantPaths,
+                variantSourceIds,
+                randomMode,
+                loop,
+                volume,
+                spatial,
+                allowHrtf,
+                useReflections,
+                useBakedReflections,
+                fadeInSeconds,
+                fadeOutSeconds,
+                crossfadeSeconds,
+                pitch,
+                pan,
+                minDistance,
+                maxDistance,
+                rolloff,
+                global,
+                startAreaId,
+                endAreaId,
+                startPosition,
+                startRadius,
+                endPosition,
+                endRadius,
+                position,
+                geometryId,
+                pathGeometryId,
+                speed));
+        }
+
         private static void ApplyApproach(
             List<TrackApproachDefinition> approaches,
             SectionBlock block,
@@ -3853,6 +4305,36 @@ namespace TopSpeed.Tracks.Map
                     foreach (var value in values)
                         yield return value;
                 }
+            }
+        }
+
+        private static IReadOnlyList<string> ParseStringListFromBlock(SectionBlock block, params string[] keys)
+        {
+            List<string>? list = null;
+            foreach (var raw in GetValues(block, keys))
+            {
+                if (string.IsNullOrWhiteSpace(raw))
+                    continue;
+                foreach (var token in SplitListTokens(raw))
+                {
+                    var trimmed = token.Trim().Trim('"');
+                    if (trimmed.Length == 0)
+                        continue;
+                    list ??= new List<string>();
+                    list.Add(trimmed);
+                }
+            }
+            return list ?? (IReadOnlyList<string>)Array.Empty<string>();
+        }
+
+        private static IEnumerable<string> SplitListTokens(string raw)
+        {
+            var tokens = raw.Split(new[] { ',', ';', '|' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < tokens.Length; i++)
+            {
+                var token = tokens[i]?.Trim();
+                if (!string.IsNullOrWhiteSpace(token))
+                    yield return token!;
             }
         }
 
@@ -4956,6 +5438,45 @@ namespace TopSpeed.Tracks.Map
             return Enum.TryParse(raw, true, out space);
         }
 
+        private static bool TryParseSoundRandomMode(string value, out TrackSoundRandomMode mode)
+        {
+            mode = TrackSoundRandomMode.OnStart;
+            if (string.IsNullOrWhiteSpace(value))
+                return false;
+            var trimmed = value.Trim().ToLowerInvariant();
+            switch (trimmed)
+            {
+                case "on_start":
+                case "onstart":
+                case "start":
+                case "once":
+                    mode = TrackSoundRandomMode.OnStart;
+                    return true;
+                case "per_area":
+                case "perarea":
+                case "area":
+                    mode = TrackSoundRandomMode.PerArea;
+                    return true;
+            }
+            return Enum.TryParse(value, true, out mode);
+        }
+
+        private static bool IsTrackRelativePath(string rawPath, string mapRoot)
+        {
+            if (string.IsNullOrWhiteSpace(rawPath))
+                return false;
+            if (Path.IsPathRooted(rawPath))
+                return false;
+            if (string.IsNullOrWhiteSpace(mapRoot))
+                return true;
+
+            var rootFull = Path.GetFullPath(mapRoot);
+            if (!rootFull.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+                rootFull += Path.DirectorySeparatorChar;
+            var combined = Path.GetFullPath(Path.Combine(rootFull, rawPath));
+            return combined.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase);
+        }
+
         private static bool TryParsePolygonPlanarityMode(SectionBlock block, out PolygonPlanarityMode mode)
         {
             mode = PolygonPlanarityMode.Strict;
@@ -5292,6 +5813,55 @@ namespace TopSpeed.Tracks.Map
                 if (TryParseVector3(raw, out value))
                     return true;
             }
+            return false;
+        }
+
+        private static bool TryParsePosition(SectionBlock block, out Vector3 value)
+        {
+            return TryParsePosition(block, string.Empty, out value);
+        }
+
+        private static bool TryParsePosition(SectionBlock block, string prefix, out Vector3 value)
+        {
+            value = Vector3.Zero;
+            var normalizedPrefix = string.IsNullOrWhiteSpace(prefix) ? string.Empty : prefix.Trim().TrimEnd('_');
+            if (string.IsNullOrWhiteSpace(normalizedPrefix))
+            {
+                if (TryParseVector3Any(block, out value, "position", "pos", "center"))
+                    return true;
+
+                var hasX = TryFloatAny(block, out var x, "x", "pos_x", "position_x");
+                var hasY = TryFloatAny(block, out var y, "y", "pos_y", "position_y");
+                var hasZ = TryFloatAny(block, out var z, "z", "pos_z", "position_z");
+                if (hasX || hasY || hasZ)
+                {
+                    value = new Vector3(hasX ? x : 0f, hasY ? y : 0f, hasZ ? z : 0f);
+                    return true;
+                }
+
+                return false;
+            }
+
+            var keyPrefix = normalizedPrefix + "_";
+            if (TryParseVector3Any(
+                    block,
+                    out value,
+                    keyPrefix + "position",
+                    keyPrefix + "pos",
+                    keyPrefix + "point"))
+            {
+                return true;
+            }
+
+            var hasPrefixX = TryFloatAny(block, out var px, keyPrefix + "x");
+            var hasPrefixY = TryFloatAny(block, out var py, keyPrefix + "y");
+            var hasPrefixZ = TryFloatAny(block, out var pz, keyPrefix + "z");
+            if (hasPrefixX || hasPrefixY || hasPrefixZ)
+            {
+                value = new Vector3(hasPrefixX ? px : 0f, hasPrefixY ? py : 0f, hasPrefixZ ? pz : 0f);
+                return true;
+            }
+
             return false;
         }
 

@@ -14,6 +14,7 @@ using TopSpeed.Tracks.Surfaces;
 using TopSpeed.Tracks.Topology;
 using TopSpeed.Tracks.Volumes;
 using TopSpeed.Tracks.Walls;
+using TopSpeed.Tracks.Sounds;
 
 namespace TopSpeed.Tracks.Map
 {
@@ -35,6 +36,7 @@ namespace TopSpeed.Tracks.Map
         private readonly List<TrackSurfaceDefinition> _surfaces;
         private readonly List<TrackProfileDefinition> _profiles;
         private readonly List<TrackBankDefinition> _banks;
+        private readonly List<TrackSoundSourceDefinition> _soundSources;
 
         public TrackMap(string name, float cellSizeMeters)
         {
@@ -56,6 +58,7 @@ namespace TopSpeed.Tracks.Map
             _surfaces = new List<TrackSurfaceDefinition>();
             _profiles = new List<TrackProfileDefinition>();
             _banks = new List<TrackBankDefinition>();
+            _soundSources = new List<TrackSoundSourceDefinition>();
         }
 
         public string Name { get; }
@@ -76,6 +79,7 @@ namespace TopSpeed.Tracks.Map
         public IReadOnlyList<TrackSurfaceDefinition> Surfaces => _surfaces;
         public IReadOnlyList<TrackProfileDefinition> Profiles => _profiles;
         public IReadOnlyList<TrackBankDefinition> Banks => _banks;
+        public IReadOnlyList<TrackSoundSourceDefinition> SoundSources => _soundSources;
         public TrackWeather Weather { get; set; } = TrackWeather.Sunny;
         public TrackAmbience Ambience { get; set; } = TrackAmbience.NoAmbience;
         public string DefaultMaterialId { get; set; } = "asphalt";
@@ -95,6 +99,8 @@ namespace TopSpeed.Tracks.Map
         public string? StartAreaId { get; set; }
         public string? FinishAreaId { get; set; }
         public float SurfaceResolutionMeters { get; set; } = 5f;
+        public string RootDirectory { get; set; } = string.Empty;
+        public string? MapPath { get; set; }
 
 
         public void AddSector(TrackSectorDefinition sector)
@@ -194,6 +200,13 @@ namespace TopSpeed.Tracks.Map
             if (material == null)
                 throw new ArgumentNullException(nameof(material));
             _materials.Add(material);
+        }
+
+        public void AddSoundSource(TrackSoundSourceDefinition source)
+        {
+            if (source == null)
+                throw new ArgumentNullException(nameof(source));
+            _soundSources.Add(source);
         }
 
         public void AddApproach(TrackApproachDefinition approach)
