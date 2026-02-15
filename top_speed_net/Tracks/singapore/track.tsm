@@ -54,6 +54,38 @@ points3d=0 0 82, 42 0 82, 42 0 158, 0 0 158
 type=polygon
 points3d=94 0 0, 146 0 0, 146 0 38, 94 0 38
 
+[geometry: turn_gate_se]
+type=polyline
+points3d=278 0 42, 278 0 82
+
+[geometry: turn_gate_ne]
+type=polyline
+points3d=238 0 198, 278 0 198
+
+[geometry: turn_gate_nw]
+type=polyline
+points3d=42 0 158, 42 0 198
+
+[geometry: turn_gate_sw]
+type=polyline
+points3d=42 0 42, 82 0 42
+
+[geometry: beacon_line_se]
+type=polyline
+points3d=299 0 90, 299 0 124
+
+[geometry: beacon_line_ne]
+type=polyline
+points3d=230 0 219, 196 0 219
+
+[geometry: beacon_line_nw]
+type=polyline
+points3d=21 0 150, 21 0 116
+
+[geometry: beacon_line_sw]
+type=polyline
+points3d=90 0 21, 124 0 21
+
 [area: south_straight_area]
 type=zone
 name=South straight
@@ -229,12 +261,13 @@ entry_portal=p_se_entry
 exit_portal=p_se_exit
 entry_heading=east
 exit_heading=north
+beacon_heading=north
 side=exit
 turn_range=165
 beacon_range=145
 beacon_mode=heading
-turn_geometry=corner_se_geom
-beacon_geometry=corner_se_geom
+turn_geometry=turn_gate_se
+beacon_geometry=beacon_line_se
 
 [guide: guide_ne]
 area=corner_ne_area
@@ -243,12 +276,13 @@ entry_portal=p_ne_entry
 exit_portal=p_ne_exit
 entry_heading=north
 exit_heading=west
+beacon_heading=west
 side=exit
 turn_range=165
 beacon_range=145
 beacon_mode=heading
-turn_geometry=corner_ne_geom
-beacon_geometry=corner_ne_geom
+turn_geometry=turn_gate_ne
+beacon_geometry=beacon_line_ne
 
 [guide: guide_nw]
 area=corner_nw_area
@@ -257,12 +291,13 @@ entry_portal=p_nw_entry
 exit_portal=p_nw_exit
 entry_heading=west
 exit_heading=south
+beacon_heading=south
 side=exit
 turn_range=165
 beacon_range=145
 beacon_mode=heading
-turn_geometry=corner_nw_geom
-beacon_geometry=corner_nw_geom
+turn_geometry=turn_gate_nw
+beacon_geometry=beacon_line_nw
 
 [guide: guide_sw]
 area=corner_sw_area
@@ -271,12 +306,13 @@ entry_portal=p_sw_entry
 exit_portal=p_sw_exit
 entry_heading=south
 exit_heading=east
+beacon_heading=east
 side=exit
 turn_range=165
 beacon_range=145
 beacon_mode=heading
-turn_geometry=corner_sw_geom
-beacon_geometry=corner_sw_geom
+turn_geometry=turn_gate_sw
+beacon_geometry=beacon_line_sw
 
 [branch: branch_se]
 area=corner_se_area

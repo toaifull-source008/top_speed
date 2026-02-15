@@ -672,6 +672,7 @@ namespace TopSpeed.Race
             {
                 _soundBeacon.SetUseReflections(true);
                 _soundBeacon.SetUseBakedReflections(false);
+                _soundBeacon.SetDopplerFactor(0f);
             }
         }
 

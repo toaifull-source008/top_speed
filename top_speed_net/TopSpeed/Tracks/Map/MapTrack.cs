@@ -400,7 +400,6 @@ namespace TopSpeed.Tracks.Map
                 return false;
 
             var position = worldPosition;
-            var position2D = new Vector2(worldPosition.X, worldPosition.Z);
             var best = default(TurnCandidate);
             var hasBest = false;
 
@@ -417,21 +416,13 @@ namespace TopSpeed.Tracks.Map
                 }
 
                 if (IsApproachSideEnabled(approach, TrackApproachSide.Entry))
-                    TryBuildTurnCandidate(approach, TrackApproachSide.Entry, position, guidanceRange, ref best, ref hasBest);
+                    TryBuildTurnCandidate(approach, TrackApproachSide.Entry, position, headingDegrees, guidanceRange, ref best, ref hasBest);
                 if (IsApproachSideEnabled(approach, TrackApproachSide.Exit))
-                    TryBuildTurnCandidate(approach, TrackApproachSide.Exit, position, guidanceRange, ref best, ref hasBest);
+                    TryBuildTurnCandidate(approach, TrackApproachSide.Exit, position, headingDegrees, guidanceRange, ref best, ref hasBest);
             }
 
             if (!hasBest)
                 return false;
-
-            var passed = false;
-            if (best.PortalHeadingDegrees.HasValue)
-            {
-                var forward = HeadingToVector(best.PortalHeadingDegrees.Value);
-                var toPlayer = position2D - new Vector2(best.PortalPosition.X, best.PortalPosition.Z);
-                passed = Vector2.Dot(forward, toPlayer) > 0f;
-            }
 
             var sectorId = best.SectorId ?? string.Empty;
             guidance = new TrackTurnGuidance(
@@ -441,7 +432,7 @@ namespace TopSpeed.Tracks.Map
                 best.TurnHeadingDegrees,
                 best.DistanceMeters,
                 best.GuidanceRangeMeters,
-                passed);
+                best.Passed);
             return true;
         }
 
@@ -933,6 +924,7 @@ namespace TopSpeed.Tracks.Map
             TrackApproachDefinition approach,
             TrackApproachSide side,
             Vector3 position,
+            float currentHeadingDegrees,
             float guidanceRangeMeters,
             ref TurnCandidate best,
             ref bool hasBest)
@@ -948,8 +940,44 @@ namespace TopSpeed.Tracks.Map
 
             var portalPos = new Vector3(portal.X, portal.Y, portal.Z);
             var distance = Vector3.Distance(position, portalPos);
-            if (TryGetTurnGeometry(approach, out var turnGeometry))
+            var passed = false;
+            var inTurnWindow = false;
+            var hasTurnGeometry = TryGetTurnGeometry(approach, out var turnGeometry);
+            if (hasTurnGeometry)
+            {
                 distance = DistanceToGeometry(turnGeometry, position, approach.WidthMeters);
+
+                // Enter turn window at/after the gate crossing in entry travel direction.
+                if (approach.EntryHeadingDegrees.HasValue &&
+                    TryGetClosestPointOnGeometry2D(turnGeometry, new Vector2(position.X, position.Z), out var gatePoint))
+                {
+                    var forward = HeadingToVector(approach.EntryHeadingDegrees.Value);
+                    var toPlayer = new Vector2(position.X, position.Z) - gatePoint;
+                    if (Vector2.Dot(forward, toPlayer) >= 0f)
+                    {
+                        inTurnWindow = true;
+                        distance = 0f;
+                    }
+                }
+            }
+
+            if (inTurnWindow)
+            {
+                var tolerance = approach.AlignmentToleranceDegrees ?? 20f;
+                tolerance = Clamp(tolerance, 5f, 45f);
+                var headingDelta = DeltaDegrees(currentHeadingDegrees, portalHeading.Value);
+                passed = headingDelta <= tolerance;
+            }
+            else if (portalHeading.HasValue)
+            {
+                var forward = HeadingToVector(portalHeading.Value);
+                var toPlayer = new Vector2(position.X - portalPos.X, position.Z - portalPos.Z);
+                // Fallback for approaches without usable gate geometry.
+                passed = !hasTurnGeometry && Vector2.Dot(forward, toPlayer) > 0f;
+            }
+
+            if (passed)
+                return;
 
             if (!hasBest || distance < best.DistanceMeters)
             {
@@ -962,7 +990,8 @@ namespace TopSpeed.Tracks.Map
                     DistanceMeters = distance,
                     PortalPosition = portalPos,
                     PortalHeadingDegrees = portalHeading,
-                    GuidanceRangeMeters = guidanceRangeMeters
+                    GuidanceRangeMeters = guidanceRangeMeters,
+                    Passed = false
                 };
                 hasBest = true;
             }
@@ -1040,6 +1069,7 @@ namespace TopSpeed.Tracks.Map
             public Vector3 PortalPosition;
             public float? PortalHeadingDegrees;
             public float GuidanceRangeMeters;
+            public bool Passed;
         }
 
         private bool TryGetTurnGeometry(TrackApproachDefinition approach, out GeometryDefinition geometry)
@@ -1145,6 +1175,96 @@ namespace TopSpeed.Tracks.Map
                     best = distance;
             }
             return best;
+        }
+
+        private static bool TryGetClosestPointOnGeometry2D(GeometryDefinition geometry, Vector2 position, out Vector2 closest)
+        {
+            closest = position;
+            if (geometry == null || geometry.Points == null || geometry.Points.Count == 0)
+                return false;
+
+            var points = geometry.Points;
+            switch (geometry.Type)
+            {
+                case GeometryType.Polyline:
+                case GeometryType.Spline:
+                    return TryGetClosestPointOnPath2D(points, position, closed: false, out closest);
+                case GeometryType.Polygon:
+                    return TryGetClosestPointOnPath2D(points, position, closed: true, out closest);
+                case GeometryType.Mesh:
+                case GeometryType.Undefined:
+                default:
+                    var best = float.MaxValue;
+                    for (var i = 0; i < points.Count; i++)
+                    {
+                        var p = new Vector2(points[i].X, points[i].Z);
+                        var d = Vector2.DistanceSquared(p, position);
+                        if (d < best)
+                        {
+                            best = d;
+                            closest = p;
+                        }
+                    }
+
+                    return best < float.MaxValue;
+            }
+        }
+
+        private static bool TryGetClosestPointOnPath2D(IReadOnlyList<Vector3> points, Vector2 position, bool closed, out Vector2 closest)
+        {
+            closest = position;
+            if (points == null || points.Count == 0)
+                return false;
+            if (points.Count == 1)
+            {
+                closest = new Vector2(points[0].X, points[0].Z);
+                return true;
+            }
+
+            var best = float.MaxValue;
+            var segmentCount = points.Count - 1;
+            for (var i = 0; i < segmentCount; i++)
+            {
+                var a = new Vector2(points[i].X, points[i].Z);
+                var b = new Vector2(points[i + 1].X, points[i + 1].Z);
+                var point = ClosestPointOnSegment2D(a, b, position);
+                var d = Vector2.DistanceSquared(point, position);
+                if (d < best)
+                {
+                    best = d;
+                    closest = point;
+                }
+            }
+
+            if (closed)
+            {
+                var a = new Vector2(points[points.Count - 1].X, points[points.Count - 1].Z);
+                var b = new Vector2(points[0].X, points[0].Z);
+                var point = ClosestPointOnSegment2D(a, b, position);
+                var d = Vector2.DistanceSquared(point, position);
+                if (d < best)
+                {
+                    best = d;
+                    closest = point;
+                }
+            }
+
+            return best < float.MaxValue;
+        }
+
+        private static Vector2 ClosestPointOnSegment2D(Vector2 a, Vector2 b, Vector2 p)
+        {
+            var ab = b - a;
+            var abLenSq = Vector2.Dot(ab, ab);
+            if (abLenSq <= float.Epsilon)
+                return a;
+
+            var t = Vector2.Dot(p - a, ab) / abLenSq;
+            if (t <= 0f)
+                return a;
+            if (t >= 1f)
+                return b;
+            return a + (ab * t);
         }
 
         private static List<Vector2> ProjectToXZ(IReadOnlyList<Vector3> points)
@@ -1324,6 +1444,7 @@ namespace TopSpeed.Tracks.Map
             {
                 _soundBeacon.SetUseReflections(true);
                 _soundBeacon.SetUseBakedReflections(false);
+                _soundBeacon.SetDopplerFactor(0f);
             }
         }
 
@@ -1925,6 +2046,12 @@ namespace TopSpeed.Tracks.Map
             if (result < 0f)
                 result += 360f;
             return result;
+        }
+
+        private static float DeltaDegrees(float current, float target)
+        {
+            var diff = Math.Abs(NormalizeDegrees(current - target));
+            return diff > 180f ? 360f - diff : diff;
         }
 
         internal bool IsSectorTransitionAllowed(Vector3 fromPosition, Vector3 toPosition, float headingDegrees)

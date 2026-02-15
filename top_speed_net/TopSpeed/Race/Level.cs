@@ -26,6 +26,7 @@ namespace TopSpeed.Race
         protected const float AdventureLaneWidth = 80.0f;
         protected const float TurnGuidanceRangeMeters = 60.0f;
         protected const float TurnGuidanceCooldownSeconds = 4.0f;
+        protected const float TurnGuidanceNowThresholdMeters = 5.0f;
         protected const float SteerAlignToleranceDegrees = 2.0f;
         protected const float SteerHoldStepDegrees = 10.0f;
         protected const float SteerAlignGain = 0.6f;
@@ -672,17 +673,29 @@ namespace TopSpeed.Race
             var roundedDistance = (int)Math.Round(guidance.DistanceMeters / 5f) * 5;
             if (roundedDistance < 5)
                 roundedDistance = 5;
+            var isImmediate = guidance.DistanceMeters <= TurnGuidanceNowThresholdMeters;
 
             if (portalKey == _lastTurnPortalId)
             {
-                if (_elapsedTotal - _lastTurnAnnouncementTime < TurnGuidanceCooldownSeconds)
-                    return;
-                if (Math.Abs(roundedDistance - _lastTurnAnnouncementDistance) < 5)
-                    return;
+                if (isImmediate)
+                {
+                    if (_lastTurnAnnouncementDistance == 0 &&
+                        (_elapsedTotal - _lastTurnAnnouncementTime) < TurnGuidanceCooldownSeconds)
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    if (_elapsedTotal - _lastTurnAnnouncementTime < TurnGuidanceCooldownSeconds)
+                        return;
+                    if (Math.Abs(roundedDistance - _lastTurnAnnouncementDistance) < 5)
+                        return;
+                }
             }
 
             var headingText = FormatTurnDirection(guidance.TurnHeadingDegrees);
-            if (guidance.DistanceMeters <= 1f)
+            if (isImmediate)
             {
                 SpeakText($"Turn {headingText} now");
                 _lastTurnPortalId = portalKey;
