@@ -30,6 +30,8 @@ namespace TopSpeed.Tracks.Map
             float turnHeadingDegrees,
             float distanceMeters,
             float guidanceRangeMeters,
+            bool hasTurnWindow,
+            bool inTurnWindow,
             bool passed)
         {
             SectorId = sectorId;
@@ -38,6 +40,8 @@ namespace TopSpeed.Tracks.Map
             TurnHeadingDegrees = turnHeadingDegrees;
             DistanceMeters = distanceMeters;
             GuidanceRangeMeters = guidanceRangeMeters;
+            HasTurnWindow = hasTurnWindow;
+            InTurnWindow = inTurnWindow;
             Passed = passed;
         }
 
@@ -47,6 +51,8 @@ namespace TopSpeed.Tracks.Map
         public float TurnHeadingDegrees { get; }
         public float DistanceMeters { get; }
         public float GuidanceRangeMeters { get; }
+        public bool HasTurnWindow { get; }
+        public bool InTurnWindow { get; }
         public bool Passed { get; }
     }
 
@@ -432,6 +438,8 @@ namespace TopSpeed.Tracks.Map
                 best.TurnHeadingDegrees,
                 best.DistanceMeters,
                 best.GuidanceRangeMeters,
+                best.HasTurnWindow,
+                best.InTurnWindow,
                 best.Passed);
             return true;
         }
@@ -943,6 +951,13 @@ namespace TopSpeed.Tracks.Map
             var passed = false;
             var inTurnWindow = false;
             var hasTurnGeometry = TryGetTurnGeometry(approach, out var turnGeometry);
+            var hasTurnWindow = hasTurnGeometry && approach.EntryHeadingDegrees.HasValue;
+            var approachWidth = Math.Max(1f, approach.WidthMeters ?? _map.DefaultWidthMeters);
+            var turnWindowActivationDistance = Math.Max(2f, approachWidth * 0.65f);
+            var entryHeadingTolerance = Math.Max(35f, Math.Min(90f, (approach.AlignmentToleranceDegrees ?? 20f) + 30f));
+            var turnHeading = portalHeading.Value;
+            if (TryGetTurnDirectionHeading(approach, out var explicitTurnHeading))
+                turnHeading = explicitTurnHeading;
             if (hasTurnGeometry)
             {
                 distance = DistanceToGeometry(turnGeometry, position, approach.WidthMeters);
@@ -953,24 +968,39 @@ namespace TopSpeed.Tracks.Map
                 {
                     var forward = HeadingToVector(approach.EntryHeadingDegrees.Value);
                     var toPlayer = new Vector2(position.X, position.Z) - gatePoint;
-                    if (Vector2.Dot(forward, toPlayer) >= 0f)
+                    if (Vector2.Dot(forward, toPlayer) >= 0f && distance <= turnWindowActivationDistance)
                     {
-                        inTurnWindow = true;
-                        distance = 0f;
+                        if (side == TrackApproachSide.Exit)
+                        {
+                            inTurnWindow = true;
+                            distance = 0f;
+                        }
+                        else
+                        {
+                            // Never switch back to entry heading once the gate is reached.
+                            passed = true;
+                        }
                     }
                 }
+            }
+
+            if (!inTurnWindow && approach.EntryHeadingDegrees.HasValue)
+            {
+                var entryDelta = DeltaDegrees(currentHeadingDegrees, approach.EntryHeadingDegrees.Value);
+                if (entryDelta > entryHeadingTolerance)
+                    return;
             }
 
             if (inTurnWindow)
             {
                 var tolerance = approach.AlignmentToleranceDegrees ?? 20f;
                 tolerance = Clamp(tolerance, 5f, 45f);
-                var headingDelta = DeltaDegrees(currentHeadingDegrees, portalHeading.Value);
+                var headingDelta = DeltaDegrees(currentHeadingDegrees, turnHeading);
                 passed = headingDelta <= tolerance;
             }
             else if (portalHeading.HasValue)
             {
-                var forward = HeadingToVector(portalHeading.Value);
+                var forward = HeadingToVector(turnHeading);
                 var toPlayer = new Vector2(position.X - portalPos.X, position.Z - portalPos.Z);
                 // Fallback for approaches without usable gate geometry.
                 passed = !hasTurnGeometry && Vector2.Dot(forward, toPlayer) > 0f;
@@ -979,18 +1009,46 @@ namespace TopSpeed.Tracks.Map
             if (passed)
                 return;
 
-            if (!hasBest || distance < best.DistanceMeters)
+            var headingDeltaCandidate = DeltaDegrees(currentHeadingDegrees, turnHeading);
+            var shouldReplace = false;
+            if (!hasBest)
+            {
+                shouldReplace = true;
+            }
+            else if (inTurnWindow != best.InTurnWindow)
+            {
+                // Always prefer the turn you are actively inside.
+                shouldReplace = inTurnWindow;
+            }
+            else if (inTurnWindow)
+            {
+                // In-window overlaps: keep the heading that best matches current turn intent.
+                if (headingDeltaCandidate < best.HeadingDelta - 0.1f)
+                    shouldReplace = true;
+                else if (Math.Abs(headingDeltaCandidate - best.HeadingDelta) <= 0.1f &&
+                         distance < best.DistanceMeters)
+                    shouldReplace = true;
+            }
+            else if (distance < best.DistanceMeters)
+            {
+                shouldReplace = true;
+            }
+
+            if (shouldReplace)
             {
                 best = new TurnCandidate
                 {
                     SectorId = approach.SectorId,
                     EntryPortalId = approach.EntryPortalId,
                     ExitPortalId = approach.ExitPortalId,
-                    TurnHeadingDegrees = portalHeading.Value,
+                    TurnHeadingDegrees = turnHeading,
                     DistanceMeters = distance,
                     PortalPosition = portalPos,
                     PortalHeadingDegrees = portalHeading,
                     GuidanceRangeMeters = guidanceRangeMeters,
+                    HasTurnWindow = hasTurnWindow,
+                    InTurnWindow = inTurnWindow,
+                    HeadingDelta = headingDeltaCandidate,
                     Passed = false
                 };
                 hasBest = true;
@@ -1069,6 +1127,9 @@ namespace TopSpeed.Tracks.Map
             public Vector3 PortalPosition;
             public float? PortalHeadingDegrees;
             public float GuidanceRangeMeters;
+            public bool HasTurnWindow;
+            public bool InTurnWindow;
+            public float HeadingDelta;
             public bool Passed;
         }
 
@@ -1096,6 +1157,106 @@ namespace TopSpeed.Tracks.Map
                     return true;
                 }
             }
+            return false;
+        }
+
+        private static bool TryGetTurnDirectionHeading(TrackApproachDefinition approach, out float heading)
+        {
+            heading = 0f;
+            if (approach?.Metadata == null || approach.Metadata.Count == 0)
+                return false;
+
+            if (!TryGetMetadataString(approach.Metadata, out var raw, "direction", "turn_direction", "turn_heading", "announcement_heading"))
+                return false;
+
+            return TryParseHeadingValue(raw, out heading);
+        }
+
+        private static bool TryParseHeadingValue(string raw, out float heading)
+        {
+            heading = 0f;
+            if (string.IsNullOrWhiteSpace(raw))
+                return false;
+
+            var trimmed = raw.Trim().ToLowerInvariant()
+                .Replace(" ", string.Empty)
+                .Replace("-", string.Empty)
+                .Replace("_", string.Empty);
+
+            switch (trimmed)
+            {
+                case "n":
+                case "north":
+                    heading = 0f;
+                    return true;
+                case "nne":
+                case "northnortheast":
+                    heading = 22.5f;
+                    return true;
+                case "ne":
+                case "northeast":
+                    heading = 45f;
+                    return true;
+                case "ene":
+                case "eastnortheast":
+                    heading = 67.5f;
+                    return true;
+                case "e":
+                case "east":
+                    heading = 90f;
+                    return true;
+                case "ese":
+                case "eastsoutheast":
+                    heading = 112.5f;
+                    return true;
+                case "se":
+                case "southeast":
+                    heading = 135f;
+                    return true;
+                case "sse":
+                case "southsoutheast":
+                    heading = 157.5f;
+                    return true;
+                case "s":
+                case "south":
+                    heading = 180f;
+                    return true;
+                case "ssw":
+                case "southsouthwest":
+                    heading = 202.5f;
+                    return true;
+                case "sw":
+                case "southwest":
+                    heading = 225f;
+                    return true;
+                case "wsw":
+                case "westsouthwest":
+                    heading = 247.5f;
+                    return true;
+                case "w":
+                case "west":
+                    heading = 270f;
+                    return true;
+                case "wnw":
+                case "westnorthwest":
+                    heading = 292.5f;
+                    return true;
+                case "nw":
+                case "northwest":
+                    heading = 315f;
+                    return true;
+                case "nnw":
+                case "northnorthwest":
+                    heading = 337.5f;
+                    return true;
+            }
+
+            if (float.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+            {
+                heading = NormalizeDegrees(parsed);
+                return true;
+            }
+
             return false;
         }
 

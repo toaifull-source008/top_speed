@@ -2304,6 +2304,14 @@ namespace TopSpeed.Tracks.Map
                     metadata["beacon_mode"] = beaconMode.Trim();
                 if (TryGetValue(block, "beacon_geometry", out var beaconGeometry))
                     metadata["beacon_geometry"] = beaconGeometry.Trim();
+                if (TryGetValue(block, "direction", out var direction))
+                    metadata["direction"] = direction.Trim();
+                if (TryGetValue(block, "turn_direction", out var turnDirection))
+                    metadata["turn_direction"] = turnDirection.Trim();
+                if (TryGetValue(block, "turn_heading", out var turnHeading))
+                    metadata["turn_heading"] = turnHeading.Trim();
+                if (TryGetValue(block, "announcement_heading", out var announcementHeading))
+                    metadata["announcement_heading"] = announcementHeading.Trim();
                 if (TryGetValue(block, "turn_range", out var turnRange))
                     metadata["turn_range"] = turnRange.Trim();
                 if (TryGetValue(block, "turn_geometry", out var turnGeometry))

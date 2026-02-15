@@ -663,7 +663,7 @@ namespace TopSpeed.Race
             }
 
             var guidanceRange = guidance.GuidanceRangeMeters > 0f ? guidance.GuidanceRangeMeters : TurnGuidanceRangeMeters;
-            if (guidance.DistanceMeters < 0f || guidance.DistanceMeters > guidanceRange)
+            if (!guidance.InTurnWindow && (guidance.DistanceMeters < 0f || guidance.DistanceMeters > guidanceRange))
             {
                 _lastTurnPortalId = null;
                 return;
@@ -673,7 +673,8 @@ namespace TopSpeed.Race
             var roundedDistance = (int)Math.Round(guidance.DistanceMeters / 5f) * 5;
             if (roundedDistance < 5)
                 roundedDistance = 5;
-            var isImmediate = guidance.DistanceMeters <= TurnGuidanceNowThresholdMeters;
+            var isImmediate = guidance.InTurnWindow ||
+                              (!guidance.HasTurnWindow && guidance.DistanceMeters <= TurnGuidanceNowThresholdMeters);
 
             if (portalKey == _lastTurnPortalId)
             {
