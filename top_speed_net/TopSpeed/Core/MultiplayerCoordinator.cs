@@ -13,6 +13,18 @@ namespace TopSpeed.Core
 {
     internal sealed class MultiplayerCoordinator
     {
+        private const string MultiplayerLobbyMenuId = "multiplayer_lobby";
+        private const string MultiplayerRoomControlsMenuId = "multiplayer_room_controls";
+        private const string MultiplayerRoomOptionsMenuId = "multiplayer_room_options";
+        private const string MultiplayerRoomBrowserMenuId = "multiplayer_rooms";
+        private const string MultiplayerCreateRoomMenuId = "multiplayer_create_room";
+        private const string MultiplayerLeaveRoomConfirmMenuId = "multiplayer_leave_room_confirm";
+        private static readonly string[] RoomTypeOptions = { "Race with bots", "One-on-one without bots" };
+        private static readonly string[] PlayerCountOptions = BuildNumericOptions(1, ProtocolConstants.MaxRoomPlayersToStart, "players");
+        private static readonly string[] LapCountOptions = BuildNumericOptions(1, 16, "laps");
+        private static readonly TrackInfo[] RoomTrackOptions = BuildRoomTrackOptions();
+        private static readonly string[] RoomTrackLabels = BuildRoomTrackLabels();
+
         private readonly MenuManager _menu;
         private readonly SpeechService _speech;
         private readonly RaceSettings _settings;
@@ -38,6 +50,9 @@ namespace TopSpeed.Core
         private bool _wasInRoom;
         private uint _lastRoomId;
         private bool _wasHost;
+        private GameRoomType _createRoomType = GameRoomType.BotsRace;
+        private byte _createRoomPlayersToStart = 2;
+        private string _createRoomName = string.Empty;
 
         public MultiplayerCoordinator(
             MenuManager menu,
@@ -110,9 +125,12 @@ namespace TopSpeed.Core
             _wasInRoom = false;
             _wasHost = false;
             _lastRoomId = 0;
+            ResetCreateRoomDraft();
             RebuildLobbyMenu();
+            RebuildCreateRoomMenu();
             RebuildRoomControlsMenu();
             RebuildRoomOptionsMenu();
+            RebuildLeaveRoomConfirmMenu();
             UpdateRoomBrowserMenu();
         }
 
@@ -124,20 +142,22 @@ namespace TopSpeed.Core
 
         public void HandleRoomState(PacketRoomState roomState)
         {
+            var wasInRoom = _wasInRoom;
+            var previousRoomId = _lastRoomId;
             _roomState = roomState ?? new PacketRoomState { InRoom = false, Players = Array.Empty<PacketRoomPlayer>() };
 
             if (_roomState.InRoom)
             {
-                if (!_wasInRoom || _lastRoomId != _roomState.RoomId)
+                if (!wasInRoom || previousRoomId != _roomState.RoomId)
                 {
                     var roomName = string.IsNullOrWhiteSpace(_roomState.RoomName) ? "game room" : _roomState.RoomName;
                     _speech.Speak($"Joined {roomName}.");
                 }
 
-                if (_roomState.IsHost && (!_wasHost || !_wasInRoom))
+                if (_roomState.IsHost && (!_wasHost || !wasInRoom))
                     _speech.Speak("You are now host of this game.");
             }
-            else if (_wasInRoom)
+            else if (wasInRoom)
             {
                 _speech.Speak("You left the game room.");
             }
@@ -146,9 +166,20 @@ namespace TopSpeed.Core
             _lastRoomId = _roomState.RoomId;
             _wasHost = _roomState.IsHost;
 
+            if (_roomState.InRoom && (!wasInRoom || previousRoomId != _roomState.RoomId))
+            {
+                _menu.ShowRoot(MultiplayerRoomControlsMenuId);
+            }
+            else if (!_roomState.InRoom && wasInRoom)
+            {
+                _menu.ShowRoot(MultiplayerLobbyMenuId);
+            }
+
             RebuildLobbyMenu();
+            RebuildCreateRoomMenu();
             RebuildRoomControlsMenu();
             RebuildRoomOptionsMenu();
+            RebuildLeaveRoomConfirmMenu();
             UpdateRoomBrowserMenu();
         }
 
@@ -159,6 +190,35 @@ namespace TopSpeed.Core
 
             if (!string.IsNullOrWhiteSpace(message.Message))
                 _speech.Speak(message.Message);
+        }
+
+        public bool IsInRoom => _roomState.InRoom;
+
+        public bool IsRoomMenu(string? currentMenuId)
+        {
+            if (!_roomState.InRoom)
+                return false;
+            return string.Equals(currentMenuId, MultiplayerRoomControlsMenuId, StringComparison.Ordinal)
+                || string.Equals(currentMenuId, MultiplayerRoomOptionsMenuId, StringComparison.Ordinal);
+        }
+
+        public bool TryHandleEscapeFromRoomMenu(string? currentMenuId)
+        {
+            if (!IsRoomMenu(currentMenuId))
+            {
+                return false;
+            }
+
+            OpenLeaveRoomConfirmation();
+            return true;
+        }
+
+        public void ShowMultiplayerMenuAfterRace()
+        {
+            if (_roomState.InRoom)
+                _menu.ShowRoot(MultiplayerRoomControlsMenuId);
+            else
+                _menu.ShowRoot(MultiplayerLobbyMenuId);
         }
 
         public void StartServerDiscovery()
@@ -303,13 +363,12 @@ namespace TopSpeed.Core
                 _resetPendingState();
 
                 OnSessionCleared();
-                session.SendRoomListRequest();
 
                 var welcome = "Connected to server.";
                 if (!string.IsNullOrWhiteSpace(result.Motd))
                     welcome += $" Message of the day: {result.Motd}.";
                 _speech.Speak(welcome);
-                _menu.ShowRoot("multiplayer_lobby");
+                _menu.ShowRoot(MultiplayerLobbyMenuId);
                 _enterMenuState();
                 return;
             }
@@ -355,17 +414,43 @@ namespace TopSpeed.Core
         {
             var items = new List<MenuItem>
             {
-                new MenuItem("Create a new game", MenuAction.None, onActivate: CreateRoom),
+                new MenuItem("Create a new game room", MenuAction.None, onActivate: OpenCreateRoomMenu),
                 new MenuItem("Join an existing game", MenuAction.None, onActivate: OpenRoomBrowser),
-                new MenuItem("Refresh game room list", MenuAction.None, onActivate: RequestRoomList)
+                new MenuItem("Options", MenuAction.None, nextMenuId: "options_main"),
+                new MenuItem("Disconnect from server", MenuAction.None, onActivate: Disconnect)
             };
 
-            if (_roomState.InRoom)
-                items.Add(new MenuItem("Room controls", MenuAction.None, nextMenuId: "multiplayer_room_controls"));
+            _menu.UpdateItems(MultiplayerLobbyMenuId, items);
+        }
 
-            items.Add(new MenuItem("Options", MenuAction.None, nextMenuId: "options_main"));
-            items.Add(new MenuItem("Disconnect", MenuAction.None, onActivate: Disconnect));
-            _menu.UpdateItems("multiplayer_lobby", items);
+        private void RebuildCreateRoomMenu()
+        {
+            var items = new List<MenuItem>
+            {
+                new RadioButton(
+                    "Game type",
+                    RoomTypeOptions,
+                    GetCreateRoomTypeIndex,
+                    SetCreateRoomType,
+                    hint: "Choose whether this room is a race with bots or a one-on-one game. Use LEFT or RIGHT to change."),
+                new RadioButton(
+                    "Maximum players allowed in this room",
+                    PlayerCountOptions,
+                    GetCreateRoomPlayersToStartIndex,
+                    SetCreateRoomPlayersToStart,
+                    hint: "Choose the player capacity from 1 to 10. Use LEFT or RIGHT to change."),
+                new MenuItem(
+                    () => string.IsNullOrWhiteSpace(_createRoomName)
+                        ? "Room name, currently automatic"
+                        : $"Room name, currently {_createRoomName}",
+                    MenuAction.None,
+                    onActivate: UpdateCreateRoomName,
+                    hint: "Press ENTER to enter a room name. Leave it empty to use an automatic name."),
+                new MenuItem("Create this game room", MenuAction.None, onActivate: ConfirmCreateRoom),
+                new MenuItem("Cancel room creation", MenuAction.Back)
+            };
+
+            _menu.UpdateItems(MultiplayerCreateRoomMenuId, items);
         }
 
         private void RebuildRoomControlsMenu()
@@ -373,20 +458,19 @@ namespace TopSpeed.Core
             var items = new List<MenuItem>();
             if (!_roomState.InRoom)
             {
-                items.Add(new MenuItem("Join a game room first", MenuAction.None));
-                items.Add(new MenuItem("Go back", MenuAction.Back));
-                _menu.UpdateItems("multiplayer_room_controls", items);
+                items.Add(new MenuItem("You are not currently inside a game room.", MenuAction.None));
+                items.Add(new MenuItem("Return to multiplayer lobby", MenuAction.None, onActivate: () => _menu.ShowRoot(MultiplayerLobbyMenuId)));
+                _menu.UpdateItems(MultiplayerRoomControlsMenuId, items);
                 return;
             }
 
             if (_roomState.IsHost)
-                items.Add(new MenuItem("Start game", MenuAction.None, onActivate: StartGame));
+                items.Add(new MenuItem("Start this game now", MenuAction.None, onActivate: StartGame));
             if (_roomState.IsHost)
                 items.Add(new MenuItem("Change game options", MenuAction.None, nextMenuId: "multiplayer_room_options"));
-            items.Add(new MenuItem("Who is present in this game", MenuAction.None, onActivate: SpeakPresentPlayers));
-            items.Add(new MenuItem("Leave room", MenuAction.None, onActivate: LeaveRoom));
-            items.Add(new MenuItem("Go back", MenuAction.Back));
-            _menu.UpdateItems("multiplayer_room_controls", items);
+            items.Add(new MenuItem("Who is currently present in this game room", MenuAction.None, onActivate: SpeakPresentPlayers));
+            items.Add(new MenuItem("Leave this game room", MenuAction.None, onActivate: OpenLeaveRoomConfirmation));
+            _menu.UpdateItems(MultiplayerRoomControlsMenuId, items);
         }
 
         private void RebuildRoomOptionsMenu()
@@ -394,55 +478,103 @@ namespace TopSpeed.Core
             var items = new List<MenuItem>();
             if (!_roomState.InRoom)
             {
-                items.Add(new MenuItem("Join a game room first", MenuAction.None));
-                items.Add(new MenuItem("Go back", MenuAction.Back));
-                _menu.UpdateItems("multiplayer_room_options", items);
+                items.Add(new MenuItem("You are not currently inside a game room.", MenuAction.None));
+                items.Add(new MenuItem("Return to room controls", MenuAction.Back));
+                _menu.UpdateItems(MultiplayerRoomOptionsMenuId, items);
                 return;
             }
 
             if (!_roomState.IsHost)
             {
-                items.Add(new MenuItem("Only the host can change game options", MenuAction.None));
-                items.Add(new MenuItem("Go back", MenuAction.Back));
-                _menu.UpdateItems("multiplayer_room_options", items);
+                items.Add(new MenuItem("Only the host can change game options.", MenuAction.None));
+                items.Add(new MenuItem("Return to room controls", MenuAction.Back));
+                _menu.UpdateItems(MultiplayerRoomOptionsMenuId, items);
                 return;
             }
 
-            items.Add(new MenuItem("Set game track", MenuAction.None, onActivate: ChangeTrack));
-            items.Add(new MenuItem("Set game laps", MenuAction.None, onActivate: ChangeLaps));
-
-            var playerOptions = new[] { "1", "2", "3", "4", "5", "6", "7", "8", "9", "10" };
             items.Add(new RadioButton(
-                "Players needed to start",
-                playerOptions,
-                () => Math.Max(0, Math.Min(playerOptions.Length - 1, (_roomState.PlayersToStart > 0 ? _roomState.PlayersToStart : (byte)1) - 1)),
+                "Track",
+                RoomTrackLabels,
+                GetCurrentRoomTrackIndex,
+                SetRoomTrackByIndex,
+                hint: "Choose which track this room will use. Use LEFT or RIGHT to change."));
+
+            items.Add(new RadioButton(
+                "Number of laps",
+                LapCountOptions,
+                () => Math.Max(0, Math.Min(LapCountOptions.Length - 1, (_roomState.Laps > 0 ? _roomState.Laps : (byte)1) - 1)),
+                value => SetLaps((byte)(value + 1)),
+                hint: "Choose the number of laps for this room. Use LEFT or RIGHT to change."));
+
+            items.Add(new RadioButton(
+                "Players required before the host can start",
+                PlayerCountOptions,
+                () => Math.Max(0, Math.Min(PlayerCountOptions.Length - 1, (_roomState.PlayersToStart > 0 ? _roomState.PlayersToStart : (byte)1) - 1)),
                 value => SetPlayersToStart((byte)(value + 1)),
                 hint: "Select how many players are required before the host can start this game. Use LEFT or RIGHT to change."));
 
-            items.Add(new MenuItem("Go back", MenuAction.Back));
-            _menu.UpdateItems("multiplayer_room_options", items);
+            items.Add(new MenuItem("Return to room controls", MenuAction.Back));
+            _menu.UpdateItems(MultiplayerRoomOptionsMenuId, items);
         }
 
-        private void RequestRoomList()
+        private void RebuildLeaveRoomConfirmMenu()
         {
-            var session = SessionOrNull();
-            if (session == null)
+            var items = new List<MenuItem>
             {
-                _speech.Speak("Not connected to a server.");
-                return;
-            }
-
-            session.SendRoomListRequest();
-            UpdateRoomBrowserMenu();
+                new MenuItem("Yes, leave this game room", MenuAction.None, onActivate: ConfirmLeaveRoom),
+                new MenuItem("No, stay in this game room", MenuAction.Back)
+            };
+            _menu.UpdateItems(MultiplayerLeaveRoomConfirmMenuId, items);
         }
 
         private void OpenRoomBrowser()
         {
-            RequestRoomList();
-            _menu.Push("multiplayer_rooms");
+            if (SessionOrNull() == null)
+            {
+                _speech.Speak("Not connected to a server.");
+                return;
+            }
+
+            _menu.Push(MultiplayerRoomBrowserMenuId);
         }
 
-        private void CreateRoom()
+        private void OpenCreateRoomMenu()
+        {
+            if (SessionOrNull() == null)
+            {
+                _speech.Speak("Not connected to a server.");
+                return;
+            }
+
+            ResetCreateRoomDraft();
+            RebuildCreateRoomMenu();
+            _menu.Push(MultiplayerCreateRoomMenuId);
+        }
+
+        private void UpdateCreateRoomName()
+        {
+            var result = _promptTextInput(
+                "Enter a room name. Leave this field empty to use an automatic room name.",
+                _createRoomName,
+                SpeechService.SpeakFlag.None,
+                true);
+
+            if (result.Cancelled)
+                return;
+
+            _createRoomName = (result.Text ?? string.Empty).Trim();
+            RebuildCreateRoomMenu();
+
+            if (string.IsNullOrWhiteSpace(_createRoomName))
+            {
+                _speech.Speak("Automatic room name selected.");
+                return;
+            }
+
+            _speech.Speak($"Room name set to {_createRoomName}.");
+        }
+
+        private void ConfirmCreateRoom()
         {
             var session = SessionOrNull();
             if (session == null)
@@ -451,64 +583,46 @@ namespace TopSpeed.Core
                 return;
             }
 
-            var typeResult = _promptTextInput(
-                "Select game type. Enter 1 for race with bots, or 2 for one-on-one without bots.",
-                "1",
-                SpeechService.SpeakFlag.None,
-                true);
-            if (typeResult.Cancelled)
-                return;
-
-            var roomType = ParseRoomType(typeResult.Text, out var parsedType)
-                ? parsedType
-                : GameRoomType.BotsRace;
-
-            byte playersToStart;
-            if (roomType == GameRoomType.OneOnOne)
-            {
+            var playersToStart = _createRoomPlayersToStart;
+            if (playersToStart < 1 || playersToStart > ProtocolConstants.MaxRoomPlayersToStart)
                 playersToStart = 2;
-            }
-            else
-            {
-                var playersResult = _promptTextInput(
-                    "Enter how many players are needed to start this game room, from 1 to 10.",
-                    "2",
-                    SpeechService.SpeakFlag.None,
-                    true);
-                if (playersResult.Cancelled)
-                    return;
 
-                if (!byte.TryParse(playersResult.Text, out playersToStart) || playersToStart < 1 || playersToStart > ProtocolConstants.MaxRoomPlayersToStart)
-                {
-                    _speech.Speak("Invalid number of players. Using 2.");
-                    playersToStart = 2;
-                }
-            }
-
-            var nameResult = _promptTextInput("Enter a game room name, or leave empty for automatic name.", null, SpeechService.SpeakFlag.None, true);
-            if (nameResult.Cancelled)
-                return;
-
-            session.SendRoomCreate(nameResult.Text, roomType, playersToStart);
+            session.SendRoomCreate(_createRoomName, _createRoomType, playersToStart);
+            _speech.Speak("Creating game room.");
+            _menu.ShowRoot(MultiplayerLobbyMenuId);
         }
 
-        private static bool ParseRoomType(string text, out GameRoomType roomType)
+        private int GetCreateRoomTypeIndex()
         {
-            var trimmed = (text ?? string.Empty).Trim();
-            if (trimmed == "2")
-            {
-                roomType = GameRoomType.OneOnOne;
-                return true;
-            }
+            return _createRoomType == GameRoomType.OneOnOne ? 1 : 0;
+        }
 
-            if (trimmed == "1")
-            {
-                roomType = GameRoomType.BotsRace;
-                return true;
-            }
+        private void SetCreateRoomType(int index)
+        {
+            _createRoomType = index == 1 ? GameRoomType.OneOnOne : GameRoomType.BotsRace;
+        }
 
-            roomType = GameRoomType.BotsRace;
-            return false;
+        private int GetCreateRoomPlayersToStartIndex()
+        {
+            var playersToStart = _createRoomPlayersToStart;
+            if (playersToStart < 1 || playersToStart > ProtocolConstants.MaxRoomPlayersToStart)
+                playersToStart = 2;
+            return playersToStart - 1;
+        }
+
+        private void SetCreateRoomPlayersToStart(int index)
+        {
+            var playersToStart = (byte)(index + 1);
+            if (playersToStart < 1 || playersToStart > ProtocolConstants.MaxRoomPlayersToStart)
+                return;
+            _createRoomPlayersToStart = playersToStart;
+        }
+
+        private void ResetCreateRoomDraft()
+        {
+            _createRoomType = GameRoomType.BotsRace;
+            _createRoomPlayersToStart = 2;
+            _createRoomName = string.Empty;
         }
 
         private void JoinRoom(uint roomId)
@@ -521,10 +635,23 @@ namespace TopSpeed.Core
             }
 
             session.SendRoomJoin(roomId);
-            _menu.ShowRoot("multiplayer_lobby");
         }
 
-        private void LeaveRoom()
+        private void OpenLeaveRoomConfirmation()
+        {
+            if (!_roomState.InRoom)
+            {
+                _speech.Speak("You are not currently inside a game room.");
+                return;
+            }
+
+            if (string.Equals(_menu.CurrentId, MultiplayerLeaveRoomConfirmMenuId, StringComparison.Ordinal))
+                return;
+
+            _menu.Push(MultiplayerLeaveRoomConfirmMenuId);
+        }
+
+        private void ConfirmLeaveRoom()
         {
             var session = SessionOrNull();
             if (session == null)
@@ -534,6 +661,8 @@ namespace TopSpeed.Core
             }
 
             session.SendRoomLeave();
+            _speech.Speak("Leaving game room.");
+            _menu.ShowRoot(MultiplayerLobbyMenuId);
         }
 
         private void StartGame()
@@ -554,54 +683,38 @@ namespace TopSpeed.Core
             session.SendRoomStartRace();
         }
 
-        private void ChangeTrack()
+        private int GetCurrentRoomTrackIndex()
         {
-            var session = SessionOrNull();
-            if (session == null)
+            var currentTrack = string.IsNullOrWhiteSpace(_roomState.TrackName) ? TrackList.RaceTracks[0].Key : _roomState.TrackName;
+            for (var i = 0; i < RoomTrackOptions.Length; i++)
             {
-                _speech.Speak("Not connected to a server.");
-                return;
+                if (string.Equals(RoomTrackOptions[i].Key, currentTrack, StringComparison.OrdinalIgnoreCase))
+                    return i;
             }
 
-            if (!_roomState.InRoom || !_roomState.IsHost)
-            {
-                _speech.Speak("Only the host can change game options.");
-                return;
-            }
-
-            var current = string.IsNullOrWhiteSpace(_roomState.TrackName) ? "america" : _roomState.TrackName;
-            var result = _promptTextInput("Enter track key, for example america or germany.", current, SpeechService.SpeakFlag.None, true);
-            if (result.Cancelled)
-                return;
-
-            session.SendRoomSetTrack(result.Text);
+            return 0;
         }
 
-        private void ChangeLaps()
+        private void SetRoomTrackByIndex(int index)
         {
             var session = SessionOrNull();
             if (session == null)
-            {
-                _speech.Speak("Not connected to a server.");
                 return;
-            }
-
             if (!_roomState.InRoom || !_roomState.IsHost)
-            {
-                _speech.Speak("Only the host can change game options.");
                 return;
-            }
-
-            var current = _roomState.Laps > 0 ? _roomState.Laps.ToString() : "3";
-            var result = _promptTextInput("Enter number of laps between 1 and 16.", current, SpeechService.SpeakFlag.None, true);
-            if (result.Cancelled)
+            if (index < 0 || index >= RoomTrackOptions.Length)
                 return;
 
-            if (!byte.TryParse(result.Text, out var laps) || laps < 1 || laps > 16)
-            {
-                _speech.Speak("Invalid laps value.");
+            session.SendRoomSetTrack(RoomTrackOptions[index].Key);
+        }
+
+        private void SetLaps(byte laps)
+        {
+            var session = SessionOrNull();
+            if (session == null || !_roomState.IsHost || !_roomState.InRoom)
                 return;
-            }
+            if (laps < 1 || laps > 16)
+                return;
 
             session.SendRoomSetLaps(laps);
         }
@@ -663,16 +776,72 @@ namespace TopSpeed.Core
                 foreach (var room in rooms)
                 {
                     var roomCopy = room;
-                    var typeText = roomCopy.RoomType == GameRoomType.OneOnOne ? "one-on-one" : "bots";
+                    var typeText = roomCopy.RoomType == GameRoomType.OneOnOne ? "one-on-one" : "race with bots";
                     var label = $"{typeText} game with {roomCopy.PlayerCount} people";
+                    label += $", maximum {roomCopy.PlayersToStart} players";
                     if (roomCopy.RaceStarted)
                         label += ", in progress";
+                    else if (roomCopy.PlayerCount >= roomCopy.PlayersToStart)
+                        label += ", room is full";
                     items.Add(new MenuItem(label, MenuAction.None, onActivate: () => JoinRoom(roomCopy.RoomId)));
                 }
             }
 
-            items.Add(new MenuItem("Go back", MenuAction.Back));
-            _menu.UpdateItems("multiplayer_rooms", items);
+            items.Add(new MenuItem("Return to multiplayer lobby", MenuAction.Back));
+            _menu.UpdateItems(MultiplayerRoomBrowserMenuId, items);
+        }
+
+        private static string[] BuildNumericOptions(int min, int max, string suffix)
+        {
+            if (max < min)
+                return Array.Empty<string>();
+
+            var options = new string[max - min + 1];
+            for (var i = min; i <= max; i++)
+            {
+                var index = i - min;
+                var unit = i == 1
+                    ? suffix.TrimEnd('s')
+                    : suffix;
+                options[index] = $"{i} {unit}";
+            }
+
+            return options;
+        }
+
+        private static TrackInfo[] BuildRoomTrackOptions()
+        {
+            var tracks = new List<TrackInfo>();
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var track in TrackList.RaceTracks)
+            {
+                if (keys.Add(track.Key))
+                    tracks.Add(track);
+            }
+
+            foreach (var track in TrackList.AdventureTracks)
+            {
+                if (keys.Add(track.Key))
+                    tracks.Add(track);
+            }
+
+            return tracks.ToArray();
+        }
+
+        private static string[] BuildRoomTrackLabels()
+        {
+            if (RoomTrackOptions.Length == 0)
+                return new[] { "America" };
+
+            var labels = new string[RoomTrackOptions.Length];
+            for (var i = 0; i < RoomTrackOptions.Length; i++)
+            {
+                var track = RoomTrackOptions[i];
+                labels[i] = $"{track.Display} ({track.Key})";
+            }
+
+            return labels;
         }
     }
 }

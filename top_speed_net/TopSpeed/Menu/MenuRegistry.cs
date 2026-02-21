@@ -75,8 +75,10 @@ namespace TopSpeed.Menu
             _menu.Register(BuildMultiplayerServersMenu());
             _menu.Register(BuildMultiplayerLobbyMenu());
             _menu.Register(BuildMultiplayerRoomsMenu());
+            _menu.Register(BuildMultiplayerCreateRoomMenu());
             _menu.Register(BuildMultiplayerRoomControlsMenu());
             _menu.Register(BuildMultiplayerRoomOptionsMenu());
+            _menu.Register(BuildMultiplayerLeaveRoomConfirmMenu());
 
             _menu.Register(BuildTrackTypeMenu("time_trial_type", RaceMode.TimeTrial));
             _menu.Register(BuildTrackTypeMenu("single_race_type", RaceMode.SingleRace));
@@ -177,6 +179,16 @@ namespace TopSpeed.Menu
             return _menu.CreateMenu("multiplayer_rooms", items, "Available game rooms");
         }
 
+        private MenuScreen BuildMultiplayerCreateRoomMenu()
+        {
+            var items = new List<MenuItem>
+            {
+                new MenuItem("Create room controls are loading", MenuAction.None),
+                BackItem()
+            };
+            return _menu.CreateMenu("multiplayer_create_room", items, "Create a new game room");
+        }
+
         private MenuScreen BuildMultiplayerRoomControlsMenu()
         {
             var items = new List<MenuItem>
@@ -195,6 +207,16 @@ namespace TopSpeed.Menu
                 BackItem()
             };
             return _menu.CreateMenu("multiplayer_room_options", items, "Change game options");
+        }
+
+        private MenuScreen BuildMultiplayerLeaveRoomConfirmMenu()
+        {
+            var items = new List<MenuItem>
+            {
+                new MenuItem("Yes, leave this game room", MenuAction.None),
+                new MenuItem("No, stay in this game room", MenuAction.Back)
+            };
+            return _menu.CreateMenu("multiplayer_leave_room_confirm", items, "Leave this game room?");
         }
 
         private MenuScreen BuildTrackMenu(string id, RaceMode mode, TrackCategory category)

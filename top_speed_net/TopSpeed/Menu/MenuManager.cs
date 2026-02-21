@@ -119,7 +119,6 @@ namespace TopSpeed.Menu
             {
                 var item = result.ActivatedItem;
                 var stackCount = _stack.Count;
-                _speech.Purge();
                 var announcement = item.ActivateAndGetAnnouncement();
                 if (announcement != null)
                     current.CancelPendingHint();

@@ -167,6 +167,11 @@ namespace TopSpeed.Core
                         break;
                     }
 
+                    if (_multiplayerCoordinator.IsRoomMenu(_menu.CurrentId)
+                        && _input.WasPressed(Key.Escape)
+                        && _multiplayerCoordinator.TryHandleEscapeFromRoomMenu(_menu.CurrentId))
+                        break;
+
                     var action = _menu.Update(_input);
                     HandleMenuAction(action);
                     break;
@@ -197,6 +202,13 @@ namespace TopSpeed.Core
             switch (action)
             {
                 case MenuAction.Exit:
+                    if (_multiplayerCoordinator.TryHandleEscapeFromRoomMenu(_menu.CurrentId))
+                        break;
+                    if (string.Equals(_menu.CurrentId, "multiplayer_lobby", StringComparison.Ordinal))
+                    {
+                        DisconnectFromServer();
+                        break;
+                    }
                     ExitRequested?.Invoke();
                     break;
                 case MenuAction.QuickStart:
@@ -576,7 +588,7 @@ namespace TopSpeed.Core
             {
                 _session.SendPlayerState(PlayerState.NotReady);
                 _state = AppState.Menu;
-                _menu.ShowRoot("multiplayer_lobby");
+                _multiplayerCoordinator.ShowMultiplayerMenuAfterRace();
             }
             else
             {

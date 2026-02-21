@@ -320,8 +320,6 @@ namespace TopSpeed.Server.Network
 
             var roomType = packet.RoomType;
             var playersToStart = packet.PlayersToStart;
-            if (roomType == GameRoomType.OneOnOne)
-                playersToStart = 2;
             if (playersToStart < 1 || playersToStart > ProtocolConstants.MaxRoomPlayersToStart)
                 playersToStart = 2;
 
@@ -331,6 +329,7 @@ namespace TopSpeed.Server.Network
             JoinRoom(player, room);
             SendProtocolMessage(player, ProtocolMessageCode.Ok, $"Created {room.Name}.");
             BroadcastRoomList();
+            BroadcastLobbyAnnouncement($"{DescribePlayer(player)} created game room {room.Name}.");
         }
 
         private void HandleJoinRoom(PlayerConnection player, PacketRoomJoin packet)
@@ -452,9 +451,6 @@ namespace TopSpeed.Server.Network
                 return;
 
             var value = packet.PlayersToStart;
-            if (room.RoomType == GameRoomType.OneOnOne)
-                value = 2;
-
             if (value < 1 || value > ProtocolConstants.MaxRoomPlayersToStart)
             {
                 SendProtocolMessage(player, ProtocolMessageCode.InvalidPlayersToStart, "Players to start must be between 1 and 10.");
@@ -703,6 +699,27 @@ namespace TopSpeed.Server.Network
                 Code = code,
                 Message = text ?? string.Empty
             }));
+        }
+
+        private void BroadcastLobbyAnnouncement(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return;
+
+            foreach (var player in _players.Values)
+            {
+                if (player.RoomId.HasValue)
+                    continue;
+
+                SendProtocolMessage(player, ProtocolMessageCode.Ok, text);
+            }
+        }
+
+        private static string DescribePlayer(PlayerConnection player)
+        {
+            if (!string.IsNullOrWhiteSpace(player.Name))
+                return player.Name;
+            return "A player";
         }
 
         private void SendToRoom(RaceRoom room, byte[] payload)

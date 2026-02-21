@@ -240,7 +240,6 @@ namespace TopSpeed.Menu
                         var safeAnnouncement = announcement;
                         if (!string.IsNullOrWhiteSpace(safeAnnouncement))
                         {
-                            _speech.Purge();
                             _speech.Speak(safeAnnouncement!);
                             CancelHint();
                         }
@@ -434,8 +433,6 @@ namespace TopSpeed.Menu
             if (_index == NoSelection)
                 return;
             var item = _items[_index];
-            if (purge)
-                _speech.Purge();
             var displayText = item.GetDisplayText();
             _speech.Speak(displayText);
             ScheduleHint(item, _index, displayText);
@@ -445,7 +442,6 @@ namespace TopSpeed.Menu
         {
             _justEntered = true;
             _ignoreHeldInput = true;
-            _speech.Purge();
             CancelHint();
             if (!string.IsNullOrWhiteSpace(Title))
                 _speech.Speak(Title, SpeechService.SpeakFlag.Interruptable);

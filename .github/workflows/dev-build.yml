@@ -34,12 +34,26 @@ jobs:
     - name: Build
       run: dotnet build TopSpeed.sln --configuration Release --no-restore
 
+    - name: Publish TopSpeed.Server (self-contained)
+      run: dotnet publish TopSpeed.Server/TopSpeed.Server.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=false -o TopSpeed.Server/publish/win-x64
+
+    - name: Publish TopSpeed.Server (self-contained linux)
+      run: dotnet publish TopSpeed.Server/TopSpeed.Server.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=false -o TopSpeed.Server/publish/linux-x64
+
     - name: Create Zip Archive
       shell: powershell
       run: |
-        $source = "TopSpeed\bin\Release\net472\*"
-        $destination = "TopSpeed-DevBuild.zip"
-        Compress-Archive -Path $source -DestinationPath $destination -CompressionLevel Optimal
+        $gameSource = "TopSpeed\bin\Release\net472\*"
+        $gameDestination = "TopSpeed-DevBuild.zip"
+        Compress-Archive -Path $gameSource -DestinationPath $gameDestination -CompressionLevel Optimal
+
+        $serverSource = "TopSpeed.Server\publish\win-x64\*"
+        $serverDestination = "TopSpeed.Server-win-x64-DevBuild.zip"
+        Compress-Archive -Path $serverSource -DestinationPath $serverDestination -CompressionLevel Optimal
+
+        $serverLinuxSource = "TopSpeed.Server\publish\linux-x64\*"
+        $serverLinuxDestination = "TopSpeed.Server-linux-x64-DevBuild.zip"
+        Compress-Archive -Path $serverLinuxSource -DestinationPath $serverLinuxDestination -CompressionLevel Optimal
 
     - name: Generate Commit Log
       id: changelog
@@ -71,4 +85,7 @@ jobs:
           *Build from commit ${{ github.sha }}*
         draft: false
         prerelease: true
-        files: top_speed_net/TopSpeed-DevBuild.zip
+        files: |
+          top_speed_net/TopSpeed-DevBuild.zip
+          top_speed_net/TopSpeed.Server-win-x64-DevBuild.zip
+          top_speed_net/TopSpeed.Server-linux-x64-DevBuild.zip
