@@ -157,8 +157,7 @@ namespace TopSpeed.Core.Multiplayer
                 controls,
                 saveLabel,
                 SaveSavedServerDraft,
-                "Go back",
-                CloseSavedServerForm);
+                "Go back");
             _menu.UpdateItems(MultiplayerSavedServerFormMenuId, items, preserveSelection: true);
         }
 
@@ -173,8 +172,9 @@ namespace TopSpeed.Core.Multiplayer
             _questions.Show(new Question(
                 "Save changes before closing?",
                 "Are you sure you would like to discard all changes?.",
-                new QuestionButton("Save changes", SaveSavedServerDraft, QuestionButtonFlags.Default),
-                new QuestionButton("Discard changes", DiscardSavedServerDraftChanges)));
+                HandleSavedServerDiscardQuestionResult,
+                new QuestionButton(QuestionId.Confirm, "Save changes", flags: QuestionButtonFlags.Default),
+                new QuestionButton(QuestionId.Close, "Discard changes")));
         }
 
         private bool IsSavedServerDraftDirty()
@@ -233,8 +233,23 @@ namespace TopSpeed.Core.Multiplayer
             _questions.Show(new Question(
                 "Delete this server?",
                 "This will remove the saved server entry from the list. Are you sure you would like to continue?",
-                new QuestionButton("Yes, delete this server", ConfirmDeleteSavedServer),
-                new QuestionButton("No, keep this server", () => _menu.PopToPrevious(), QuestionButtonFlags.Default)));
+                HandleDeleteSavedServerQuestionResult,
+                new QuestionButton(QuestionId.Yes, "Yes, delete this server"),
+                new QuestionButton(QuestionId.No, "No, keep this server", flags: QuestionButtonFlags.Default)));
+        }
+
+        private void HandleSavedServerDiscardQuestionResult(int resultId)
+        {
+            if (resultId == QuestionId.Confirm)
+                SaveSavedServerDraft();
+            else if (resultId == QuestionId.Close || resultId == QuestionId.Cancel || resultId == QuestionId.No)
+                DiscardSavedServerDraftChanges();
+        }
+
+        private void HandleDeleteSavedServerQuestionResult(int resultId)
+        {
+            if (resultId == QuestionId.Yes)
+                ConfirmDeleteSavedServer();
         }
 
         private void ConfirmDeleteSavedServer()
@@ -286,18 +301,5 @@ namespace TopSpeed.Core.Multiplayer
             return ResolveServerPort();
         }
 
-        public bool IsSavedServerFormMenu(string? currentMenuId)
-        {
-            return string.Equals(currentMenuId, MultiplayerSavedServerFormMenuId, StringComparison.Ordinal);
-        }
-
-        public bool TryHandleEscapeFromSavedServerFormMenu(string? currentMenuId)
-        {
-            if (!IsSavedServerFormMenu(currentMenuId))
-                return false;
-
-            CloseSavedServerForm();
-            return true;
-        }
     }
 }

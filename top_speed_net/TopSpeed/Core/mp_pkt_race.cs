@@ -16,6 +16,7 @@ namespace TopSpeed.Core
             _mpPktReg.Add("race_event", Command.RaceAborted, HandleMpRaceAbortedPacket);
             _mpPktReg.Add("race_event", Command.PlayerBumped, HandleMpPlayerBumpedPacket);
             _mpPktReg.Add("race_event", Command.PlayerCrashed, HandleMpPlayerCrashedPacket);
+            _mpPktReg.Add("race_event", Command.PlayerFinished, HandleMpPlayerFinishedPacket);
             _mpPktReg.Add("race_event", Command.PlayerDisconnected, HandleMpPlayerDisconnectedPacket);
             _mpPktReg.Add("race_event", Command.StopRace, HandleMpStopRacePacket);
         }
@@ -60,6 +61,16 @@ namespace TopSpeed.Core
 
             if (ClientPacketSerializer.TryReadPlayer(packet.Payload, out var crashed))
                 _multiplayerRace.ApplyRemoteCrash(crashed);
+            return true;
+        }
+
+        private bool HandleMpPlayerFinishedPacket(IncomingPacket packet)
+        {
+            if (_multiplayerRace == null)
+                return true;
+
+            if (ClientPacketSerializer.TryReadPlayer(packet.Payload, out var finished))
+                _multiplayerRace.ApplyRemoteFinish(finished);
             return true;
         }
 

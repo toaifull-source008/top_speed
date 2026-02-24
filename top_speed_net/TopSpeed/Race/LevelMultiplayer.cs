@@ -426,7 +426,7 @@ namespace TopSpeed.Race
 
         protected override void OnLocalRadioMediaLoaded(uint mediaId, string mediaPath)
         {
-            if (!_session.SendRadioMedia(mediaId, mediaPath))
+            if (!_session.SendRadioMediaStreamed(mediaId, mediaPath))
                 SpeakText("Failed to transmit radio media.");
         }
 
@@ -536,6 +536,26 @@ namespace TopSpeed.Race
                 return;
             if (_remotePlayers.TryGetValue(crashed.PlayerNumber, out var remote))
                 remote.Player.Crash(remote.Player.PositionX, scheduleRestart: false);
+        }
+
+        public void ApplyRemoteFinish(PacketPlayer finished)
+        {
+            if (finished.PlayerNumber == _playerNumber)
+                return;
+            if (!_remotePlayers.TryGetValue(finished.PlayerNumber, out var remote))
+                return;
+            if (remote.Finished)
+                return;
+
+            remote.Finished = true;
+            remote.State = PlayerState.Finished;
+            remote.Player.Stop();
+
+            if ((int)finished.PlayerNumber < _soundPlayerNr.Length)
+            {
+                SpeakIfAvailable(_soundPlayerNr[finished.PlayerNumber], true);
+                SpeakIfAvailable(_soundFinished[Math.Min(_positionFinish++, _soundFinished.Length - 1)], true);
+            }
         }
 
         public void RemoveRemotePlayer(byte playerNumber)

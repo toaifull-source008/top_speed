@@ -40,6 +40,12 @@ namespace TopSpeed.Menu
             screen.ReplaceItems(items, preserveSelection);
         }
 
+        public void SetCloseHandler(string id, Func<MenuCloseSource, bool>? closeHandler)
+        {
+            var screen = GetScreen(id);
+            screen.CloseHandler = closeHandler;
+        }
+
         public void ShowRoot(string id, string? openingAnnouncement = null, int? preferredSelectionIndex = null)
         {
             foreach (var existingScreen in _stack)
@@ -104,15 +110,7 @@ namespace TopSpeed.Menu
 
             if (result.BackRequested)
             {
-                if (_stack.Count > 1)
-                {
-                    _stack.Peek().CancelPendingHint();
-                    _stack.Pop();
-                    _stack.Peek().QueueTitleAnnouncement();
-                    return MenuAction.None;
-                }
-
-                return MenuAction.Exit;
+                return HandleClose(current, MenuCloseSource.Shortcut);
             }
 
             if (result.ActivatedItem != null)
@@ -123,17 +121,8 @@ namespace TopSpeed.Menu
                 if (announcement != null)
                     current.CancelPendingHint();
                 var stackChanged = _stack.Count != stackCount || _stack.Peek() != current;
-                if (item.Action == MenuAction.Back)
-                {
-                    if (_stack.Count > 1)
-                    {
-                        _stack.Peek().CancelPendingHint();
-                        _stack.Pop();
-                        _stack.Peek().QueueTitleAnnouncement();
-                        return MenuAction.None;
-                    }
-                    return MenuAction.Exit;
-                }
+                if (item.Action == MenuAction.Back || item.IsCloseItem)
+                    return HandleClose(current, MenuCloseSource.Item);
                 if (!string.IsNullOrWhiteSpace(item.NextMenuId))
                 {
                     Push(item.NextMenuId!);
@@ -147,6 +136,22 @@ namespace TopSpeed.Menu
             }
 
             return MenuAction.None;
+        }
+
+        private MenuAction HandleClose(MenuScreen current, MenuCloseSource source)
+        {
+            if (current.TryHandleClose(source))
+                return MenuAction.None;
+
+            if (_stack.Count > 1)
+            {
+                _stack.Peek().CancelPendingHint();
+                _stack.Pop();
+                _stack.Peek().QueueTitleAnnouncement();
+                return MenuAction.None;
+            }
+
+            return MenuAction.Exit;
         }
 
         private MenuScreen GetScreen(string id)

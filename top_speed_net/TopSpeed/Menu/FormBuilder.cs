@@ -23,8 +23,7 @@ namespace TopSpeed.Menu
             IEnumerable<MenuFormControl> controls,
             string saveLabel,
             Action onSave,
-            string closeLabel,
-            Action onClose)
+            string closeLabel)
         {
             var items = new List<MenuItem>();
             if (controls != null)
@@ -36,7 +35,7 @@ namespace TopSpeed.Menu
             }
 
             items.Add(new MenuItem(saveLabel, MenuAction.None, onActivate: onSave));
-            items.Add(new MenuItem(closeLabel, MenuAction.None, onActivate: onClose));
+            items.Add(new MenuItem(closeLabel, MenuAction.None, flags: MenuItemFlags.Close));
             return items;
         }
     }

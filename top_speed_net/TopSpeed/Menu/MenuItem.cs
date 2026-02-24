@@ -14,6 +14,8 @@ namespace TopSpeed.Menu
         public string? NextMenuId { get; }
         public Action? OnActivate { get; }
         public bool SuppressPostActivateAnnouncement { get; }
+        public MenuItemFlags Flags { get; }
+        public bool IsCloseItem => (Flags & MenuItemFlags.Close) != 0;
         public bool HasActions => _actions.Length > 0;
         public int ActionCount => _actions.Length;
 
@@ -24,6 +26,7 @@ namespace TopSpeed.Menu
             Action? onActivate = null,
             bool suppressPostActivateAnnouncement = false,
             string? hint = null,
+            MenuItemFlags flags = MenuItemFlags.None,
             params MenuItemAction[] actions)
         {
             _text = text;
@@ -33,6 +36,7 @@ namespace TopSpeed.Menu
             OnActivate = onActivate;
             SuppressPostActivateAnnouncement = suppressPostActivateAnnouncement;
             Hint = hint;
+            Flags = flags;
             _actions = actions ?? Array.Empty<MenuItemAction>();
         }
 
@@ -43,6 +47,7 @@ namespace TopSpeed.Menu
             Action? onActivate = null,
             bool suppressPostActivateAnnouncement = false,
             string? hint = null,
+            MenuItemFlags flags = MenuItemFlags.None,
             params MenuItemAction[] actions)
         {
             _text = string.Empty;
@@ -52,6 +57,7 @@ namespace TopSpeed.Menu
             OnActivate = onActivate;
             SuppressPostActivateAnnouncement = suppressPostActivateAnnouncement;
             Hint = hint;
+            Flags = flags;
             _actions = actions ?? Array.Empty<MenuItemAction>();
         }
 

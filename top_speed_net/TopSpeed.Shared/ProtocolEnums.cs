@@ -103,7 +103,8 @@ namespace TopSpeed.Protocol
     public enum GameRoomType : byte
     {
         BotsRace = 0,
-        OneOnOne = 1
+        OneOnOne = 1,
+        PlayersRace = 2
     }
 
     public enum RoomEventKind : byte

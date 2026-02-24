@@ -172,6 +172,62 @@ namespace TopSpeed.Network
             return true;
         }
 
+        public bool SendRadioMediaStreamed(uint mediaId, string filePath)
+        {
+            if (mediaId == 0 || string.IsNullOrWhiteSpace(filePath))
+                return false;
+            if (!File.Exists(filePath))
+                return false;
+
+            FileStream? stream = null;
+            try
+            {
+                stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                if (stream.Length <= 0 || stream.Length > ProtocolConstants.MaxMediaBytes)
+                    return false;
+
+                var extension = Path.GetExtension(filePath).Trim().TrimStart('.');
+                if (extension.Length > ProtocolConstants.MaxMediaFileExtensionLength)
+                    extension = extension.Substring(0, ProtocolConstants.MaxMediaFileExtensionLength);
+
+                SafeSendStream(
+                    ClientPacketSerializer.WritePlayerMediaBegin(
+                        PlayerId,
+                        PlayerNumber,
+                        mediaId,
+                        (uint)stream.Length,
+                        extension),
+                    PacketStream.Media);
+
+                var chunkIndex = 0;
+                var buffer = new byte[RadioChunkSize];
+                while (true)
+                {
+                    var read = stream.Read(buffer, 0, buffer.Length);
+                    if (read <= 0)
+                        break;
+
+                    var chunk = new byte[read];
+                    Buffer.BlockCopy(buffer, 0, chunk, 0, read);
+                    SafeSendStream(
+                        ClientPacketSerializer.WritePlayerMediaChunk(PlayerId, PlayerNumber, mediaId, (ushort)chunkIndex, chunk),
+                        PacketStream.Media);
+                    chunkIndex++;
+                }
+
+                SafeSendStream(ClientPacketSerializer.WritePlayerMediaEnd(PlayerId, PlayerNumber, mediaId), PacketStream.Media);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                stream?.Dispose();
+            }
+        }
+
         public void SendPlayerStarted()
         {
             var payload = ClientPacketSerializer.WritePlayer(Command.PlayerStarted, PlayerId, PlayerNumber);

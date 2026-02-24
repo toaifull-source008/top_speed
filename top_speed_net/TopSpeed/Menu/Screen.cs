@@ -76,9 +76,11 @@ namespace TopSpeed.Menu
             set => _musicVolume = Math.Max(0f, Math.Min(1f, value));
         }
         public Action<float>? MusicVolumeChanged { get; set; }
+        public Func<MenuCloseSource, bool>? CloseHandler { get; set; }
         internal bool HasMusic => !string.IsNullOrWhiteSpace(MusicFile);
         internal bool IsMusicPlaying => _music != null && _music.IsPlaying;
         internal void CancelPendingHint() => CancelHint();
+        internal bool TryHandleClose(MenuCloseSource source) => CloseHandler?.Invoke(source) == true;
 
         public MenuScreen(string id, IEnumerable<MenuItem> items, AudioManager audio, SpeechService speech, string? title = null, Func<string>? titleProvider = null, Func<bool>? usageHintsEnabled = null)
         {

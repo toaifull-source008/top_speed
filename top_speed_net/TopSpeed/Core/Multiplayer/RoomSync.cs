@@ -68,6 +68,8 @@ namespace TopSpeed.Core.Multiplayer
                 RebuildRoomControlsMenu();
                 RebuildRoomOptionsMenu();
             }
+
+            RebuildRoomPlayersMenu();
         }
 
         public void HandleRoomEvent(PacketRoomEvent roomEvent)
@@ -83,6 +85,8 @@ namespace TopSpeed.Core.Multiplayer
                 RebuildRoomControlsMenu();
                 RebuildRoomOptionsMenu();
             }
+            if (_roomState.InRoom)
+                RebuildRoomPlayersMenu();
 
             if (beginLoadout)
                 BeginRaceLoadoutSelection();

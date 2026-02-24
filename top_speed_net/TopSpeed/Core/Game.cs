@@ -33,6 +33,7 @@ namespace TopSpeed.Core
         private readonly SpeechService _speech;
         private readonly InputManager _input;
         private readonly MenuManager _menu;
+        private readonly QuestionDialog _questions;
         private readonly RaceSettings _settings;
         private readonly RaceInput _raceInput;
         private readonly RaceSetup _setup;
@@ -57,6 +58,7 @@ namespace TopSpeed.Core
         private LevelTimeTrial? _timeTrial;
         private LevelSingleRace? _singleRace;
         private LevelMultiplayer? _multiplayerRace;
+        private bool _multiplayerRaceQuitConfirmActive;
         private TrackData? _pendingMultiplayerTrack;
         private string _pendingMultiplayerTrackName = string.Empty;
         private int _pendingMultiplayerLaps;
@@ -90,6 +92,7 @@ namespace TopSpeed.Core
             _raceInput = new RaceInput(_settings);
             _setup = new RaceSetup();
             _menu = new MenuManager(_audio, _speech, () => _settings.UsageHints);
+            _questions = new QuestionDialog(_menu);
             _menu.SetWrapNavigation(_settings.MenuWrapNavigation);
             _menu.SetMenuSoundPreset(_settings.MenuSoundPreset);
             _menu.SetMenuNavigatePanning(_settings.MenuNavigatePanning);
@@ -113,6 +116,7 @@ namespace TopSpeed.Core
             _mpPktReg = new ClientPktReg();
             RegisterMultiplayerPacketHandlers();
             _menuRegistry.RegisterAll();
+            _multiplayerCoordinator.ConfigureMenuCloseHandlers();
             _needsCalibration = _settings.ScreenReaderRateMs <= 0f;
         }
 
@@ -175,22 +179,6 @@ namespace TopSpeed.Core
                         break;
                     }
 
-                    if (_multiplayerCoordinator.IsRoomMenu(_menu.CurrentId)
-                        && _input.WasPressed(Key.Escape)
-                        && _multiplayerCoordinator.TryHandleEscapeFromRoomMenu(_menu.CurrentId))
-                    {
-                        _input.LatchMenuBack();
-                        break;
-                    }
-
-                    if (_multiplayerCoordinator.IsSavedServerFormMenu(_menu.CurrentId)
-                        && _input.WasPressed(Key.Escape)
-                        && _multiplayerCoordinator.TryHandleEscapeFromSavedServerFormMenu(_menu.CurrentId))
-                    {
-                        _input.LatchMenuBack();
-                        break;
-                    }
-
                     var action = _menu.Update(_input);
                     HandleMenuAction(action);
                     break;
@@ -221,15 +209,6 @@ namespace TopSpeed.Core
             switch (action)
             {
                 case MenuAction.Exit:
-                    if (_multiplayerCoordinator.TryHandleEscapeFromRoomMenu(_menu.CurrentId))
-                        break;
-                    if (_multiplayerCoordinator.TryHandleExitFromRaceLoadoutMenu(_menu.CurrentId))
-                        break;
-                    if (string.Equals(_menu.CurrentId, "multiplayer_lobby", StringComparison.Ordinal))
-                    {
-                        DisconnectFromServer();
-                        break;
-                    }
                     ExitRequested?.Invoke();
                     break;
                 case MenuAction.QuickStart:
@@ -378,6 +357,7 @@ namespace TopSpeed.Core
             _multiplayerRace?.FinalizeLevelMultiplayer();
             _multiplayerRace?.Dispose();
             _multiplayerRace = null;
+            _multiplayerRaceQuitConfirmActive = false;
 
             ResetPendingMultiplayerState();
             ClearSession();
@@ -485,8 +465,14 @@ namespace TopSpeed.Core
             if (_multiplayerRace == null)
                 return;
             _multiplayerRace.Run(elapsed);
-            if (_multiplayerRace.WantsExit || _input.WasPressed(SharpDX.DirectInput.Key.Escape))
+            if (_multiplayerRace.WantsExit)
+            {
                 EndMultiplayerRace();
+                return;
+            }
+
+            if (_input.WasPressed(SharpDX.DirectInput.Key.Escape))
+                OpenMultiplayerRaceQuitConfirmation();
         }
 
         private void ProcessMultiplayerPackets()
@@ -558,6 +544,7 @@ namespace TopSpeed.Core
             _multiplayerRace?.FinalizeLevelMultiplayer();
             _multiplayerRace?.Dispose();
             _multiplayerRace = null;
+            _multiplayerRaceQuitConfirmActive = false;
 
             if (_session != null)
             {
@@ -619,6 +606,75 @@ namespace TopSpeed.Core
                     _state = AppState.Paused;
                     break;
             }
+        }
+
+        private void OpenMultiplayerRaceQuitConfirmation()
+        {
+            if (_multiplayerRace == null)
+                return;
+            if (_multiplayerRaceQuitConfirmActive)
+                return;
+            if (_questions.IsQuestionMenu(_menu.CurrentId))
+                return;
+
+            _multiplayerRace.StartStopwatchDiff();
+            _multiplayerRace.Pause();
+            _multiplayerRaceQuitConfirmActive = true;
+            _state = AppState.Menu;
+
+            _questions.Show(new Question(
+                "Quit race?",
+                "Are you sure you want to quit this multiplayer race?",
+                QuestionId.No,
+                HandleMultiplayerRaceQuitQuestionResult,
+                new QuestionButton(QuestionId.Yes, "Yes, quit the race"),
+                new QuestionButton(QuestionId.No, "No, continue racing", flags: QuestionButtonFlags.Default)));
+        }
+
+        private void HandleMultiplayerRaceQuitQuestionResult(int resultId)
+        {
+            if (resultId == QuestionId.Yes)
+                ConfirmQuitMultiplayerRace();
+            else if (resultId == QuestionId.No || resultId == QuestionId.Cancel || resultId == QuestionId.Close)
+                CancelMultiplayerRaceQuitConfirmation();
+        }
+
+        private void CancelMultiplayerRaceQuitConfirmation()
+        {
+            if (!_multiplayerRaceQuitConfirmActive)
+                return;
+
+            if (_questions.IsQuestionMenu(_menu.CurrentId) && _menu.CanPop)
+                _menu.PopToPrevious();
+
+            _multiplayerRaceQuitConfirmActive = false;
+
+            if (_multiplayerRace == null)
+            {
+                _state = AppState.Menu;
+                return;
+            }
+
+            _multiplayerRace.Unpause();
+            _multiplayerRace.StopStopwatchDiff();
+            _state = AppState.MultiplayerRace;
+        }
+
+        private void ConfirmQuitMultiplayerRace()
+        {
+            if (!_multiplayerRaceQuitConfirmActive)
+                return;
+
+            _multiplayerRaceQuitConfirmActive = false;
+            _session?.SendRoomLeave();
+
+            _multiplayerRace?.FinalizeLevelMultiplayer();
+            _multiplayerRace?.Dispose();
+            _multiplayerRace = null;
+
+            ResetPendingMultiplayerState();
+            _state = AppState.Menu;
+            _menu.ShowRoot("multiplayer_lobby");
         }
 
         private void StartRace(RaceMode mode)
@@ -729,7 +785,6 @@ namespace TopSpeed.Core
         void IMenuActions.StartServerDiscovery() => _multiplayerCoordinator.StartServerDiscovery();
         void IMenuActions.OpenSavedServersManager() => _multiplayerCoordinator.OpenSavedServersManager();
         void IMenuActions.BeginManualServerEntry() => _multiplayerCoordinator.BeginManualServerEntry();
-        void IMenuActions.DisconnectFromServer() => DisconnectFromServer();
         void IMenuActions.SpeakNotImplemented() => _speech.Speak("Not implemented yet.");
         void IMenuActions.BeginServerPortEntry() => _multiplayerCoordinator.BeginServerPortEntry();
         void IMenuActions.RestoreDefaults() => RestoreDefaults();

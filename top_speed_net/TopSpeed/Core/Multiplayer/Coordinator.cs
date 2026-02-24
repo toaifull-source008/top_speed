@@ -19,13 +19,14 @@ namespace TopSpeed.Core.Multiplayer
         private const string MultiplayerLobbyMenuId = "multiplayer_lobby";
         private const string MultiplayerRoomControlsMenuId = "multiplayer_room_controls";
         private const string MultiplayerRoomOptionsMenuId = "multiplayer_room_options";
+        private const string MultiplayerRoomPlayersMenuId = "multiplayer_room_players";
         private const string MultiplayerRoomBrowserMenuId = "multiplayer_rooms";
         private const string MultiplayerCreateRoomMenuId = "multiplayer_create_room";
         private const string MultiplayerLoadoutVehicleMenuId = "multiplayer_loadout_vehicle";
         private const string MultiplayerLoadoutTransmissionMenuId = "multiplayer_loadout_transmission";
         private const string MultiplayerSavedServersMenuId = "multiplayer_saved_servers";
         private const string MultiplayerSavedServerFormMenuId = "multiplayer_saved_server_form";
-        private static readonly string[] RoomTypeOptions = { "Race with bots", "One-on-one without bots" };
+        private static readonly string[] RoomTypeOptions = { "Race with bots", "Race without bots", "One-on-one without bots" };
         private static readonly string[] PlayerCountOptions = BuildNumericOptions(1, ProtocolConstants.MaxRoomPlayersToStart, "players");
         private static readonly string[] LapCountOptions = BuildNumericOptions(1, 16, "laps");
         private static readonly TrackInfo[] RoomTrackOptions = BuildRoomTrackOptions();
@@ -165,6 +166,7 @@ namespace TopSpeed.Core.Multiplayer
             RebuildSavedServerFormMenu();
             RebuildRoomControlsMenu();
             RebuildRoomOptionsMenu();
+            RebuildRoomPlayersMenu();
             RebuildLoadoutVehicleMenu();
             RebuildLoadoutTransmissionMenu();
             UpdateRoomBrowserMenu();

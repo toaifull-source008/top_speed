@@ -16,7 +16,6 @@ namespace TopSpeed.Menu
         void StartServerDiscovery();
         void OpenSavedServersManager();
         void BeginManualServerEntry();
-        void DisconnectFromServer();
         void SpeakNotImplemented();
         void BeginServerPortEntry();
         void RestoreDefaults();
@@ -80,6 +79,7 @@ namespace TopSpeed.Menu
             _menu.Register(BuildMultiplayerRoomsMenu());
             _menu.Register(BuildMultiplayerCreateRoomMenu());
             _menu.Register(BuildMultiplayerRoomControlsMenu());
+            _menu.Register(BuildMultiplayerRoomPlayersMenu());
             _menu.Register(BuildMultiplayerRoomOptionsMenu());
             _menu.Register(BuildMultiplayerLoadoutVehicleMenu());
             _menu.Register(BuildMultiplayerLoadoutTransmissionMenu());
@@ -169,7 +169,7 @@ namespace TopSpeed.Menu
                 new MenuItem("Create a new game", MenuAction.None, onActivate: _actions.SpeakNotImplemented),
                 new MenuItem("Join an existing game", MenuAction.None, onActivate: _actions.SpeakNotImplemented),
                 new MenuItem("Options", MenuAction.None, nextMenuId: "options_main"),
-                new MenuItem("Disconnect", MenuAction.None, onActivate: _actions.DisconnectFromServer)
+                new MenuItem("Disconnect", MenuAction.None, flags: MenuItemFlags.Close)
             };
             return _menu.CreateMenu("multiplayer_lobby", items, string.Empty);
         }
@@ -221,6 +221,16 @@ namespace TopSpeed.Menu
                 BackItem()
             };
             return _menu.CreateMenu("multiplayer_room_controls", items, "Room controls");
+        }
+
+        private MenuScreen BuildMultiplayerRoomPlayersMenu()
+        {
+            var items = new List<MenuItem>
+            {
+                new MenuItem("Join a game room first", MenuAction.None),
+                BackItem()
+            };
+            return _menu.CreateMenu("multiplayer_room_players", items, "Players in room");
         }
 
         private MenuScreen BuildMultiplayerRoomOptionsMenu()
