@@ -540,6 +540,7 @@ namespace TopSpeed.Core.Multiplayer
             _clearSession();
             _speech.Speak("Disconnected from server.");
             _menu.ShowRoot("main");
+            _menu.FadeInMenuMusic();
             _enterMenuState();
         }
 
