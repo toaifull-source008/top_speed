@@ -11,6 +11,11 @@ namespace TopSpeed.Server.Network
             if (name.Length > ProtocolConstants.MaxPlayerNameLength)
                 name = name.Substring(0, ProtocolConstants.MaxPlayerNameLength);
             player.Name = name;
+            if (!player.ServerPresenceAnnounced)
+            {
+                player.ServerPresenceAnnounced = true;
+                BroadcastServerConnectAnnouncement(player);
+            }
             if (player.RoomId.HasValue && _rooms.TryGetValue(player.RoomId.Value, out var room))
             {
                 TouchRoomVersion(room);
@@ -193,6 +198,36 @@ namespace TopSpeed.Server.Network
             }
 
             SendToRoomExceptOnStream(room, player.Id, PacketSerializer.WritePlayer(Command.PlayerCrashed, player.Id, player.PlayerNumber), PacketStream.RaceEvent);
+        }
+
+        private void BroadcastServerConnectAnnouncement(PlayerConnection connected)
+        {
+            var name = string.IsNullOrWhiteSpace(connected.Name) ? "A player" : connected.Name;
+            var text = $"{name} has connected to the server.";
+            foreach (var player in _players.Values)
+            {
+                if (player.Id == connected.Id || !player.ServerPresenceAnnounced)
+                    continue;
+
+                SendProtocolMessage(player, ProtocolMessageCode.ServerPlayerConnected, text);
+            }
+        }
+
+        private void BroadcastServerDisconnectAnnouncement(PlayerConnection disconnected, string reason)
+        {
+            var name = string.IsNullOrWhiteSpace(disconnected.Name) ? "A player" : disconnected.Name;
+            var normalizedReason = (reason ?? string.Empty).Trim();
+            var text = string.Equals(normalizedReason, "timeout", System.StringComparison.OrdinalIgnoreCase)
+                ? $"{name} has lost connection to the server."
+                : $"{name} has disconnected from the server.";
+
+            foreach (var player in _players.Values)
+            {
+                if (player.Id == disconnected.Id || !player.ServerPresenceAnnounced)
+                    continue;
+
+                SendProtocolMessage(player, ProtocolMessageCode.ServerPlayerDisconnected, text);
+            }
         }
     }
 }

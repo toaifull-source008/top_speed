@@ -32,6 +32,7 @@ namespace TopSpeed.Server.Network
         public int Frequency { get; set; }
         public PlayerState State { get; set; }
         public string Name { get; set; }
+        public bool ServerPresenceAnnounced { get; set; }
         public bool EngineRunning { get; set; }
         public bool Braking { get; set; }
         public bool Horning { get; set; }

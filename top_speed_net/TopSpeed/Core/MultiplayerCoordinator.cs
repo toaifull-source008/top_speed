@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using TopSpeed.Audio;
 using TopSpeed.Common;
 using TopSpeed.Data;
 using TopSpeed.Input;
@@ -10,6 +12,7 @@ using TopSpeed.Network;
 using TopSpeed.Protocol;
 using TopSpeed.Speech;
 using TopSpeed.Windowing;
+using TS.Audio;
 
 namespace TopSpeed.Core
 {
@@ -28,8 +31,10 @@ namespace TopSpeed.Core
         private static readonly string[] LapCountOptions = BuildNumericOptions(1, 16, "laps");
         private static readonly TrackInfo[] RoomTrackOptions = BuildRoomTrackOptions();
         private static readonly string[] RoomTrackLabels = BuildRoomTrackLabels();
+        private const int ConnectingPulseIntervalMs = 500;
 
         private readonly MenuManager _menu;
+        private readonly AudioManager _audio;
         private readonly SpeechService _speech;
         private readonly RaceSettings _settings;
         private readonly MultiplayerConnector _connector;
@@ -60,9 +65,15 @@ namespace TopSpeed.Core
         private byte _createRoomPlayersToStart = 2;
         private string _createRoomName = string.Empty;
         private int _pendingLoadoutVehicleIndex;
+        private CancellationTokenSource? _connectingSoundCts;
+        private AudioSourceHandle? _connectingSound;
+        private AudioSourceHandle? _connectedSound;
+        private AudioSourceHandle? _onlineSound;
+        private AudioSourceHandle? _offlineSound;
 
         public MultiplayerCoordinator(
             MenuManager menu,
+            AudioManager audio,
             SpeechService speech,
             RaceSettings settings,
             MultiplayerConnector connector,
@@ -76,6 +87,7 @@ namespace TopSpeed.Core
             Action<int, bool> setLocalMultiplayerLoadout)
         {
             _menu = menu ?? throw new ArgumentNullException(nameof(menu));
+            _audio = audio ?? throw new ArgumentNullException(nameof(audio));
             _speech = speech ?? throw new ArgumentNullException(nameof(speech));
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
             _connector = connector ?? throw new ArgumentNullException(nameof(connector));
@@ -129,6 +141,7 @@ namespace TopSpeed.Core
 
         public void OnSessionCleared()
         {
+            StopConnectingPulse();
             _roomList = new PacketRoomList();
             _roomState = new PacketRoomState { InRoom = false, Players = Array.Empty<PacketRoomPlayer>() };
             _wasInRoom = false;
@@ -232,6 +245,11 @@ namespace TopSpeed.Core
         {
             if (message == null)
                 return;
+
+            if (message.Code == ProtocolMessageCode.ServerPlayerConnected)
+                PlayNetworkSound("online.wav");
+            else if (message.Code == ProtocolMessageCode.ServerPlayerDisconnected)
+                PlayNetworkSound("offline.wav");
 
             if (!string.IsNullOrWhiteSpace(message.Message))
                 _speech.Speak(message.Message);
@@ -558,6 +576,7 @@ namespace TopSpeed.Core
         {
             _speech.Speak("Attempting to connect, please wait...");
             _clearSession();
+            StartConnectingPulse();
             _connectCts?.Cancel();
             _connectCts?.Dispose();
             _connectCts = new CancellationTokenSource();
@@ -566,6 +585,7 @@ namespace TopSpeed.Core
 
         private void HandleConnectResult(ConnectResult result)
         {
+            StopConnectingPulse();
             if (result.Success && result.Session != null)
             {
                 var session = result.Session;
@@ -573,6 +593,7 @@ namespace TopSpeed.Core
                 _resetPendingState();
 
                 OnSessionCleared();
+                PlayNetworkSound("connected.wav");
 
                 var welcome = "Connected to server.";
                 if (!string.IsNullOrWhiteSpace(result.Motd))
@@ -585,6 +606,103 @@ namespace TopSpeed.Core
 
             _speech.Speak($"Failed to connect: {result.Message}");
             _enterMenuState();
+        }
+
+        private void StartConnectingPulse()
+        {
+            StopConnectingPulse();
+            var handle = GetNetworkSound(ref _connectingSound, "connecting.wav");
+            if (handle == null)
+                return;
+
+            _connectingSoundCts = new CancellationTokenSource();
+            var token = _connectingSoundCts.Token;
+            Task.Run(async () =>
+            {
+                while (!token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        handle.Restart(loop: false);
+                    }
+                    catch
+                    {
+                        // Ignore audio errors for network cue.
+                    }
+
+                    try
+                    {
+                        await Task.Delay(ConnectingPulseIntervalMs, token).ConfigureAwait(false);
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        break;
+                    }
+                }
+            }, token);
+        }
+
+        private void StopConnectingPulse()
+        {
+            _connectingSoundCts?.Cancel();
+            _connectingSoundCts?.Dispose();
+            _connectingSoundCts = null;
+            try
+            {
+                _connectingSound?.Stop();
+            }
+            catch
+            {
+                // Ignore audio stop failures for network cue.
+            }
+        }
+
+        private void PlayNetworkSound(string fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName))
+                return;
+
+            AudioSourceHandle? handle;
+            if (string.Equals(fileName, "online.wav", StringComparison.OrdinalIgnoreCase))
+                handle = GetNetworkSound(ref _onlineSound, fileName);
+            else if (string.Equals(fileName, "offline.wav", StringComparison.OrdinalIgnoreCase))
+                handle = GetNetworkSound(ref _offlineSound, fileName);
+            else if (string.Equals(fileName, "connecting.wav", StringComparison.OrdinalIgnoreCase))
+                handle = GetNetworkSound(ref _connectingSound, fileName);
+            else
+                handle = GetNetworkSound(ref _connectedSound, fileName);
+
+            if (handle == null)
+                return;
+
+            try
+            {
+                handle.Restart(loop: false);
+            }
+            catch
+            {
+                // Ignore audio errors for network cue.
+            }
+        }
+
+        private AudioSourceHandle? GetNetworkSound(ref AudioSourceHandle? cache, string fileName)
+        {
+            if (cache != null)
+                return cache;
+
+            var path = Path.Combine(AssetPaths.SoundsRoot, "network", fileName ?? string.Empty);
+            if (!_audio.TryResolvePath(path, out var fullPath))
+                return null;
+
+            try
+            {
+                cache = _audio.AcquireCachedSource(fullPath, streamFromDisk: false);
+                return cache;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private void HandleServerPortInput(string text)

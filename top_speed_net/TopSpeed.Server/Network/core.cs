@@ -92,6 +92,8 @@ namespace TopSpeed.Server.Network
             var roomId = player.RoomId;
             if (player.RoomId.HasValue)
                 HandleLeaveRoom(player, notifyRoom);
+            if (player.ServerPresenceAnnounced)
+                BroadcastServerDisconnectAnnouncement(player, reason);
             if (sendDisconnectPacket)
                 SendStream(player, TopSpeed.Server.Protocol.PacketSerializer.WriteGeneral(TopSpeed.Protocol.Command.Disconnect), TopSpeed.Protocol.PacketStream.Control);
             _endpointIndex.Remove(player.EndPoint.ToString());

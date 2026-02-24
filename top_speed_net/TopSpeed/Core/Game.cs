@@ -97,6 +97,7 @@ namespace TopSpeed.Core
             _inputMapping = new InputMappingHandler(_input, _raceInput, _settings, _speech, SaveSettings);
             _multiplayerCoordinator = new MultiplayerCoordinator(
                 _menu,
+                _audio,
                 _speech,
                 _settings,
                 new MultiplayerConnector(),

@@ -95,7 +95,9 @@ namespace TopSpeed.Protocol
         InvalidTrack = 6,
         InvalidLaps = 7,
         NotInRoom = 8,
-        InvalidPlayersToStart = 9
+        InvalidPlayersToStart = 9,
+        ServerPlayerConnected = 10,
+        ServerPlayerDisconnected = 11
     }
 
     public enum GameRoomType : byte
