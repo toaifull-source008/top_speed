@@ -19,6 +19,7 @@ namespace TopSpeed.Network
         private readonly Task _pollTask;
         private readonly Task _keepAliveTask;
         private readonly ConcurrentQueue<IncomingPacket> _incoming;
+        private Action<IncomingPacket>? _packetSink;
         private byte _playerNumber;
 
         public MultiplayerSession(
@@ -69,8 +70,11 @@ namespace TopSpeed.Network
                     // Ignore poll failures to keep the session alive.
                 }
 
+                DrainIncomingToSink();
                 Thread.Sleep(1);
             }
+
+            DrainIncomingToSink();
         }
 
         private async Task KeepAliveLoop(CancellationToken token)
@@ -94,6 +98,13 @@ namespace TopSpeed.Network
         public bool TryDequeuePacket(out IncomingPacket packet)
         {
             return _incoming.TryDequeue(out packet);
+        }
+
+        public void SetPacketSink(Action<IncomingPacket>? packetSink)
+        {
+            _packetSink = packetSink;
+            if (packetSink != null)
+                DrainIncomingToSink();
         }
 
         public void SendPlayerState(PlayerState state)
@@ -259,17 +270,17 @@ namespace TopSpeed.Network
 
         public void SendRoomListRequest()
         {
-            SafeSendStream(ClientPacketSerializer.WriteRoomListRequest(), PacketStream.Room);
+            SafeSendStream(ClientPacketSerializer.WriteRoomListRequest(), PacketStream.Query);
         }
 
         public void SendRoomStateRequest()
         {
-            SafeSendStream(ClientPacketSerializer.WriteRoomStateRequest(), PacketStream.Room);
+            SafeSendStream(ClientPacketSerializer.WriteRoomStateRequest(), PacketStream.Query);
         }
 
         public void SendRoomGetRequest(uint roomId)
         {
-            SafeSendStream(ClientPacketSerializer.WriteRoomGetRequest(roomId), PacketStream.Room);
+            SafeSendStream(ClientPacketSerializer.WriteRoomGetRequest(roomId), PacketStream.Query);
         }
 
         public void SendRoomCreate(string roomName, GameRoomType roomType, byte playersToStart)
@@ -362,17 +373,43 @@ namespace TopSpeed.Network
             _manager.Stop();
             _cts.Dispose();
         }
+
+        private void DrainIncomingToSink()
+        {
+            var sink = _packetSink;
+            if (sink == null)
+                return;
+
+            while (_incoming.TryDequeue(out var packet))
+            {
+                try
+                {
+                    sink(packet);
+                }
+                catch
+                {
+                    // Keep the network loop alive if main-thread marshaling throws.
+                }
+            }
+        }
     }
 
     internal readonly struct IncomingPacket
     {
         public IncomingPacket(Command command, byte[] payload)
+            : this(command, payload, 0)
+        {
+        }
+
+        public IncomingPacket(Command command, byte[] payload, long receivedUtcTicks)
         {
             Command = command;
             Payload = payload;
+            ReceivedUtcTicks = receivedUtcTicks;
         }
 
         public Command Command { get; }
         public byte[] Payload { get; }
+        public long ReceivedUtcTicks { get; }
     }
 }

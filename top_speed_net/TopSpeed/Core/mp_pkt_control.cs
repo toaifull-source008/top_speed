@@ -30,9 +30,9 @@ namespace TopSpeed.Core
             return true;
         }
 
-        private bool HandleMpPongPacket(IncomingPacket _)
+        private bool HandleMpPongPacket(IncomingPacket packet)
         {
-            _multiplayerCoordinator.HandlePingReply();
+            _multiplayerCoordinator.HandlePingReply(packet.ReceivedUtcTicks);
             return true;
         }
     }

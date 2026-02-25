@@ -616,7 +616,7 @@ namespace TopSpeed.Server.Network
                     .ToArray()
             };
 
-            SendStream(player, PacketSerializer.WriteRoomList(list), PacketStream.Room);
+            SendStream(player, PacketSerializer.WriteRoomList(list), PacketStream.Query);
         }
 
         private uint TouchRoomVersion(RaceRoom room)
@@ -756,7 +756,7 @@ namespace TopSpeed.Server.Network
                     PlayersToStart = 0,
                     PreparingRace = false,
                     Players = Array.Empty<PacketRoomPlayer>()
-                }), PacketStream.Room);
+                }), PacketStream.Query);
                 return;
             }
 
@@ -775,7 +775,7 @@ namespace TopSpeed.Server.Network
                 TrackName = room.TrackName,
                 Laps = room.Laps,
                 Players = BuildRoomPlayers(room)
-            }), PacketStream.Room);
+            }), PacketStream.Query);
         }
 
         private void SendRoomGet(PlayerConnection player, RaceRoom? room)
@@ -786,7 +786,7 @@ namespace TopSpeed.Server.Network
                 {
                     Found = false,
                     Players = Array.Empty<PacketRoomPlayer>()
-                }), PacketStream.Room);
+                }), PacketStream.Query);
                 return;
             }
 
@@ -804,7 +804,7 @@ namespace TopSpeed.Server.Network
                 TrackName = room.TrackName,
                 Laps = room.Laps,
                 Players = BuildRoomPlayers(room)
-            }), PacketStream.Room);
+            }), PacketStream.Query);
         }
 
         private void AssignRandomBotLoadouts(RaceRoom room)

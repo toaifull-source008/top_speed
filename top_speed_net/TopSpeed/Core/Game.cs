@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using SharpDX.DirectInput;
 using TopSpeed.Audio;
@@ -41,6 +42,7 @@ namespace TopSpeed.Core
         private readonly MenuRegistry _menuRegistry;
         private readonly MultiplayerCoordinator _multiplayerCoordinator;
         private readonly ClientPktReg _mpPktReg;
+        private readonly ConcurrentQueue<QueuedIncomingPacket> _queuedMultiplayerPackets;
         private MultiplayerSession? _session;
         private readonly InputMappingHandler _inputMapping;
         private LogoScreen? _logo;
@@ -66,7 +68,7 @@ namespace TopSpeed.Core
         private bool _multiplayerAutomaticTransmission = true;
         private bool _audioLoopActive;
         public bool IsModalInputActive { get; private set; }
-        internal int LoopIntervalMs => IsMenuState(_state) ? 30 : 8;
+        internal int LoopIntervalMs => IsMenuState(_state) ? 15 : 8;
 
         private const string CalibrationIntroMenuId = "calibration_intro";
         private const string CalibrationSampleMenuId = "calibration_sample";
@@ -112,6 +114,7 @@ namespace TopSpeed.Core
                 ResetPendingMultiplayerState,
                 SetMultiplayerLoadout);
             _mpPktReg = new ClientPktReg();
+            _queuedMultiplayerPackets = new ConcurrentQueue<QueuedIncomingPacket>();
             RegisterMultiplayerPacketHandlers();
             _menuRegistry.RegisterAll();
             _multiplayerCoordinator.ConfigureMenuCloseHandlers();
@@ -323,6 +326,8 @@ namespace TopSpeed.Core
         private void SetSession(MultiplayerSession session)
         {
             _session = session;
+            ClearQueuedMultiplayerPackets();
+            session.SetPacketSink(packet => EnqueueMultiplayerPacket(session, packet));
         }
 
         private MultiplayerSession? GetSession()
@@ -332,8 +337,12 @@ namespace TopSpeed.Core
 
         private void ClearSession()
         {
-            _session?.Dispose();
+            var session = _session;
+            if (session != null)
+                session.SetPacketSink(null);
+            session?.Dispose();
             _session = null;
+            ClearQueuedMultiplayerPackets();
             _multiplayerCoordinator.OnSessionCleared();
         }
 
@@ -485,15 +494,26 @@ namespace TopSpeed.Core
 
         private void ProcessMultiplayerPackets()
         {
-            var session = _session;
-            if (session == null)
-                return;
-
-            while (session.TryDequeuePacket(out var packet))
+            while (_queuedMultiplayerPackets.TryDequeue(out var queued))
             {
-                _mpPktReg.TryDispatch(packet);
-                if (!ReferenceEquals(_session, session))
+                if (!ReferenceEquals(_session, queued.Session))
+                    continue;
+
+                _mpPktReg.TryDispatch(queued.Packet);
+                if (!ReferenceEquals(_session, queued.Session))
                     return;
+            }
+        }
+
+        private void EnqueueMultiplayerPacket(MultiplayerSession session, IncomingPacket packet)
+        {
+            _queuedMultiplayerPackets.Enqueue(new QueuedIncomingPacket(session, packet));
+        }
+
+        private void ClearQueuedMultiplayerPackets()
+        {
+            while (_queuedMultiplayerPackets.TryDequeue(out _))
+            {
             }
         }
 
@@ -755,9 +775,22 @@ namespace TopSpeed.Core
             _logo?.Dispose();
             _menu.Dispose();
             _input.Dispose();
+            _session?.SetPacketSink(null);
             _session?.Dispose();
             _speech.Dispose();
             _audio.Dispose();
+        }
+
+        private readonly struct QueuedIncomingPacket
+        {
+            public QueuedIncomingPacket(MultiplayerSession session, IncomingPacket packet)
+            {
+                Session = session;
+                Packet = packet;
+            }
+
+            public MultiplayerSession Session { get; }
+            public IncomingPacket Packet { get; }
         }
 
         public void FadeOutMenuMusic(int durationMs = 1000)

@@ -57,14 +57,17 @@ namespace TopSpeed.Network
             {
                 disconnected = true;
                 disconnectReason = info.Reason.ToString();
-                incoming.Enqueue(new IncomingPacket(Command.Disconnect, new[] { ProtocolConstants.Version, (byte)Command.Disconnect }));
+                incoming.Enqueue(new IncomingPacket(
+                    Command.Disconnect,
+                    new[] { ProtocolConstants.Version, (byte)Command.Disconnect },
+                    DateTime.UtcNow.Ticks));
             };
             listener.NetworkReceiveEvent += (_, reader, _, _) =>
             {
                 var data = reader.GetRemainingBytes();
                 reader.Recycle();
                 if (ClientPacketSerializer.TryReadHeader(data, out var command))
-                    incoming.Enqueue(new IncomingPacket(command, data));
+                    incoming.Enqueue(new IncomingPacket(command, data, DateTime.UtcNow.Ticks));
             };
 
             var manager = new NetManager(listener)

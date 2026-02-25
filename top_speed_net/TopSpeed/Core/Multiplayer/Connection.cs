@@ -330,13 +330,14 @@ namespace TopSpeed.Core.Multiplayer
             session.SendPing();
         }
 
-        public void HandlePingReply()
+        public void HandlePingReply(long receivedUtcTicks = 0)
         {
             if (!_pingPending)
                 return;
 
             _pingPending = false;
-            var elapsed = TimeSpan.FromTicks(DateTime.UtcNow.Ticks - _pingStartedAtMs).TotalMilliseconds;
+            var endTicks = receivedUtcTicks > 0 ? receivedUtcTicks : DateTime.UtcNow.Ticks;
+            var elapsed = TimeSpan.FromTicks(endTicks - _pingStartedAtMs).TotalMilliseconds;
             if (elapsed < 0)
                 elapsed = 0;
             PlayNetworkSound("ping_stop.ogg");
