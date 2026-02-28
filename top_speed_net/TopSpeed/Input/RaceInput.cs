@@ -588,6 +588,8 @@ namespace TopSpeed.Input
 
         public bool GetToggleRadioPlaybackRequest() => WasPressed(Key.P);
 
+        public bool GetToggleComputerControl() => WasPressed(Key.B) && IsAltDown();
+
         public void SetPanelInputAccess(bool allowDrivingInput, bool allowAuxiliaryInput)
         {
             _allowDrivingInput = allowDrivingInput;
@@ -892,6 +894,11 @@ namespace TopSpeed.Input
             var current = GetAxis(axis, _lastJoystick);
             var previous = _hasPrevJoystick ? GetAxis(axis, _prevJoystick) : 0;
             return current > 50 && previous <= 50;
+        }
+
+        private bool IsAltDown()
+        {
+            return _lastState.IsDown(Key.LeftAlt) || _lastState.IsDown(Key.RightAlt);
         }
 
         private bool IsCtrlDown()
