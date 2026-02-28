@@ -39,6 +39,8 @@ namespace TopSpeed.Vehicles
         private CarState _state;
         private TrackSurface _surface;
         private int _gear;
+        private bool _isComputerControlled;
+        private int _computerRandom;
         private float _speed;
         private float _positionX;
         private float _positionY;
@@ -171,6 +173,7 @@ namespace TopSpeed.Vehicles
             _switchingGear = 0;
             _speed = 0;
             _frame = 1;
+            _computerRandom = Algorithm.RandomInt(100);
             _throttleVolume = 0.0f;
             _prevThrottleVolume = 0.0f;
             _prevFrequency = 0;
@@ -588,9 +591,30 @@ namespace TopSpeed.Vehicles
                 if (_positionY < 0f)
                     _positionY = 0f;
 
-                _currentSteering = _input.GetSteering();
-                _currentThrottle = _input.GetThrottle();
-                _currentBrake = _input.GetBrake();
+                if (_input.GetToggleComputerControl())
+                {
+                    _isComputerControlled = !_isComputerControlled;
+                }
+
+                if (_isComputerControlled)
+                {
+                    var road = _track.RoadComputer(_positionY);
+                    var laneHalfWidth = Math.Max(0.1f, Math.Abs(road.Right - road.Left) * 0.5f);
+                    var relPos = TopSpeed.Bots.BotRaceRules.CalculateRelativeLanePosition(_positionX, road.Left, laneHalfWidth);
+                    var nextRoad = _track.RoadComputer(_positionY + 30.0f);
+                    var nextLaneHalfWidth = Math.Max(0.1f, Math.Abs(nextRoad.Right - nextRoad.Left) * 0.5f);
+
+                    TopSpeed.Bots.BotSharedModel.GetControlInputs(1, _computerRandom, road.Type, nextRoad.Type, relPos, out var botThrottle, out var botSteering);
+                    _currentThrottle = (int)Math.Round(botThrottle);
+                    _currentSteering = (int)Math.Round(botSteering);
+                    _currentBrake = 0;
+                }
+                else
+                {
+                    _currentSteering = _input.GetSteering();
+                    _currentThrottle = _input.GetThrottle();
+                    _currentBrake = _input.GetBrake();
+                }
                 var gearUp = _input.GetGearUp();
                 var gearDown = _input.GetGearDown();
 
